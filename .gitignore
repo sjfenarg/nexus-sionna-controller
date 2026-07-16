@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Generated simulation outputs
+output/
+output_debug/
+output_sionna_smoke/
+output_backend*/
+backend_test/
+*.h5
+
+# Local request/config scratch space
+configs/*.json
+*.local.json
+
+# Large raw measurement exports kept outside git history
+meas/*.mat
+
+# Notebooks and editor metadata
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS metadata
+Thumbs.db
+.DS_Store

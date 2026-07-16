@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isac-6d-sampler"
+version = "0.1.0"
+description = "Sionna controller for calibrated 6D ISAC channel sample generation"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "h5py>=3.10.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "sionna>=2.0.1,<3",
+    "sionna-rt>=2.0.1,<3",
+    "tensorflow>=2.15.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PyOpenGL>=3.1.0",
+    "PySide6>=6.6.0",
+    "pyqtgraph>=0.13.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+isac6d = "isac_6d_sampler.cli:main"
+isac6d-gui = "isac_6d_sampler.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

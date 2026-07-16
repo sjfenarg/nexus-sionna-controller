@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+*.ply binary
+*.mat binary
+*.h5 binary
+*.lock text eol=lf

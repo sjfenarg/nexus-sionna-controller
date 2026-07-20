@@ -4,6 +4,8 @@ from copy import deepcopy
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from isac_6d_sampler.core.antenna_patterns import available_pattern_names
 from isac_6d_sampler.core.config_io import read_request, write_request
 from isac_6d_sampler.core.estimates import estimate_request_size, format_request_estimate
@@ -25,9 +27,11 @@ from isac_6d_sampler.core.scenarios import discover_scenarios, load_scenario_ass
 from isac_6d_sampler.core.trajectory_specs import (
     anchor_trajectory,
     build_trajectory_spec,
+    format_bezier_handles,
     format_point_list,
     translate_trajectory,
 )
+from isac_6d_sampler.core.trajectories import default_bezier_handles, normalized_bezier_handles
 from isac_6d_sampler.core.validation import validate_request
 
 
@@ -92,6 +96,7 @@ def main() -> int:
                 on_moved=self._transform_entity_from_view,
                 on_transform_started=self._begin_view_transform,
                 on_trajectory_point_moved=self._move_trajectory_point_from_view,
+                on_trajectory_handle_moved=self._move_trajectory_handle_from_view,
                 on_trajectory_endpoint_transformed=self._transform_trajectory_endpoint_from_view,
                 on_trajectory_transform_started=self._begin_view_transform,
                 on_radiomap_bounds_changed=self._set_radiomap_bounds_from_view,
@@ -143,12 +148,19 @@ def main() -> int:
             self.roll = _double_spin(-6.283, 6.283, 0.0)
             self.samples = _spin(1, 10000, 8)
             self.trajectory_kind = QComboBox()
-            self.trajectory_kind.addItems(["static", "linear", "polyline"])
+            self.trajectory_kind.addItems(["static", "linear", "polyline", "curve"])
             self.trajectory_points = QLineEdit("0,0,1.5; 5,0,1.5")
+            self.trajectory_handles = QLineEdit("")
             self.trajectory_easing = QComboBox()
             self.trajectory_easing.addItems(["linear", "smoothstep"])
             self.start_static = _double_spin(0.0, 0.95, 0.0)
             self.end_static = _double_spin(0.0, 0.95, 0.0)
+            self.add_curve_point = QPushButton("Add Middle")
+            self.add_curve_point.setObjectName("trajectory_add_middle")
+            self.add_curve_point.clicked.connect(self.add_curve_middle_point)
+            self.remove_curve_point = QPushButton("Remove Middle")
+            self.remove_curve_point.setObjectName("trajectory_remove_middle")
+            self.remove_curve_point.clicked.connect(self.remove_curve_middle_point)
             self.samples_per_src = _spin(1, 10_000_000, 500_000)
             self.max_num_paths_per_src = _spin(1, 10_000_000, 100_000)
             self.max_num_paths_per_src.setObjectName("max_num_paths_per_src")
@@ -274,6 +286,8 @@ def main() -> int:
                 [
                     ("Kind", self.trajectory_kind),
                     ("Points", self.trajectory_points),
+                    ("Bezier handles", self.trajectory_handles),
+                    ("Curve points", _inline(self.add_curve_point, self.remove_curve_point)),
                     ("Easing", self.trajectory_easing),
                     ("Start static", self.start_static),
                     ("End static", self.end_static),
@@ -543,6 +557,9 @@ def main() -> int:
             asset = self._current_scenario_asset()
             available = set(asset.object_names) if asset is not None else set(DYNAMIC_SCENE_OBJECT_NAMES)
             names = [name for name in DYNAMIC_SCENE_OBJECT_NAMES if not available or name in available]
+            if asset is not None:
+                names.extend(mesh.name for mesh in asset.object_meshes)
+            names = list(dict.fromkeys(names))
             if not names:
                 names = [DYNAMIC_SCENE_OBJECT_NAMES[0]]
             self.object_name.addItems(names)
@@ -611,10 +628,53 @@ def main() -> int:
                 return
             points = list(trajectory.points)
             points[0] = entity.position
+            old_point = points[point_index]
             points[point_index] = tuple(float(value) for value in position)
+            bezier_handles = self._shift_curve_point_handles(
+                trajectory,
+                point_index,
+                old_point,
+                points[point_index],
+                points,
+            )
             entity.trajectory = TrajectorySpec(
                 kind=trajectory.kind,
                 points=points,
+                bezier_handles=bezier_handles,
+                orientation_rad_points=self._trajectory_orientation_points(
+                    entity,
+                    trajectory,
+                    source_orientations=trajectory.orientation_rad_points,
+                ),
+                samples=self.samples.value(),
+                start_static_fraction=trajectory.start_static_fraction,
+                end_static_fraction=trajectory.end_static_fraction,
+                easing=trajectory.easing,
+            )
+            self._set_trajectory_controls(entity.trajectory)
+
+        def _move_trajectory_handle_from_view(self, entity_id: str, point_index: int, handle_side: str, position):
+            entity = self._find_entity_by_id(entity_id)
+            if entity is None or not hasattr(entity, "trajectory"):
+                return
+            trajectory = entity.trajectory
+            if trajectory.kind != "curve" or point_index < 0 or point_index >= len(trajectory.points):
+                return
+            points = list(trajectory.points)
+            handles = normalized_bezier_handles(trajectory)
+            plane_z = float(points[0][2])
+            handle_position = (float(position[0]), float(position[1]), plane_z)
+            handle_in, handle_out = handles[point_index]
+            if handle_side == "in":
+                handles[point_index] = (handle_position, handle_out)
+            elif handle_side == "out":
+                handles[point_index] = (handle_in, handle_position)
+            else:
+                return
+            entity.trajectory = TrajectorySpec(
+                kind=trajectory.kind,
+                points=points,
+                bezier_handles=handles,
                 orientation_rad_points=self._trajectory_orientation_points(
                     entity,
                     trajectory,
@@ -636,7 +696,15 @@ def main() -> int:
                 return
             points = list(trajectory.points)
             points[0] = entity.position
+            old_point = points[point_index]
             points[point_index] = tuple(float(value) for value in position)
+            bezier_handles = self._shift_curve_point_handles(
+                trajectory,
+                point_index,
+                old_point,
+                points[point_index],
+                points,
+            )
             orientation_points = self._trajectory_orientation_points(
                 entity,
                 trajectory,
@@ -646,6 +714,7 @@ def main() -> int:
             entity.trajectory = TrajectorySpec(
                 kind=trajectory.kind,
                 points=points,
+                bezier_handles=bezier_handles,
                 orientation_rad_points=orientation_points,
                 samples=self.samples.value(),
                 start_static_fraction=trajectory.start_static_fraction,
@@ -912,7 +981,29 @@ def main() -> int:
                     end_static_fraction=old.end_static_fraction,
                     easing=old.easing,
                 )
-            raise ValueError("Trajectory kind must be static, linear, or polyline")
+            if kind == "curve":
+                points = list(old.points)
+                if len(points) < 2:
+                    points = [start, (start[0] + 5.0, start[1], start[2])]
+                points[0] = start
+                points = self._curve_plane_points(points)
+                old_curve = TrajectorySpec(kind="curve", points=points, bezier_handles=old.bezier_handles)
+                trajectory = TrajectorySpec(kind="curve", points=points, bezier_handles=normalized_bezier_handles(old_curve))
+                return TrajectorySpec(
+                    kind="curve",
+                    points=points,
+                    bezier_handles=trajectory.bezier_handles,
+                    orientation_rad_points=self._trajectory_orientation_points(
+                        entity,
+                        trajectory,
+                        source_orientations=old.orientation_rad_points,
+                    ),
+                    samples=self.samples.value(),
+                    start_static_fraction=old.start_static_fraction,
+                    end_static_fraction=old.end_static_fraction,
+                    easing=old.easing,
+                )
+            raise ValueError("Trajectory kind must be static, linear, polyline, or curve")
 
         def _position_from_controls(self):
             return (self.pos_x.value(), self.pos_y.value(), self.pos_z.value())
@@ -991,6 +1082,7 @@ def main() -> int:
                 self.trajectory_kind.currentText(),
                 points_text,
                 self.samples.value(),
+                bezier_handles_text=self.trajectory_handles.text().strip(),
                 easing=self.trajectory_easing.currentText(),
                 start_static_fraction=self.start_static.value(),
                 end_static_fraction=self.end_static.value(),
@@ -1008,8 +1100,93 @@ def main() -> int:
                 self.start_static.setValue(spec.start_static_fraction)
                 self.end_static.setValue(spec.end_static_fraction)
                 self.trajectory_points.setText(format_point_list(spec.points))
+                self.trajectory_handles.setText(format_bezier_handles(normalized_bezier_handles(spec)) if spec.kind == "curve" else "")
+                curve_enabled = spec.kind == "curve"
+                self.trajectory_handles.setEnabled(curve_enabled)
+                self.add_curve_point.setEnabled(curve_enabled)
+                self.remove_curve_point.setEnabled(curve_enabled and len(spec.points) > 2)
             finally:
                 self._syncing_controls = False
+
+        def add_curve_middle_point(self):
+            entity = self._find_selected_entity()
+            if entity is None or not hasattr(entity, "trajectory"):
+                self.log.append("ERROR adding curve point: select a UE or object")
+                return
+            try:
+                self._push_undo(f"add curve point {entity.id}")
+                trajectory = entity.trajectory if entity.trajectory.kind == "curve" else self._trajectory_for_kind(entity, "curve")
+                points = list(trajectory.points)
+                if len(points) < 2:
+                    points = [entity.position, (entity.position[0] + 5.0, entity.position[1], entity.position[2])]
+                insert_at = len(points) - 1
+                previous_point = np.asarray(points[insert_at - 1], dtype=np.float64)
+                next_point = np.asarray(points[insert_at], dtype=np.float64)
+                middle = tuple(float(value) for value in ((previous_point + next_point) / 2.0))
+                points.insert(insert_at, middle)
+                points = self._curve_plane_points(points)
+                entity.trajectory = TrajectorySpec(
+                    kind="curve",
+                    points=points,
+                    bezier_handles=default_bezier_handles(points),
+                    orientation_rad_points=self._trajectory_orientation_points(entity, TrajectorySpec(kind="curve", points=points)),
+                    samples=self.samples.value(),
+                    start_static_fraction=trajectory.start_static_fraction,
+                    end_static_fraction=trajectory.end_static_fraction,
+                    easing=trajectory.easing,
+                )
+                self._set_trajectory_controls(entity.trajectory)
+                self.refresh(reset_camera=False)
+            except Exception as exc:  # noqa: BLE001 - shown to GUI user
+                self.log.append(f"ERROR adding curve point: {exc}")
+
+        def remove_curve_middle_point(self):
+            entity = self._find_selected_entity()
+            if entity is None or not hasattr(entity, "trajectory") or entity.trajectory.kind != "curve":
+                self.log.append("ERROR removing curve point: select a curve UE or object")
+                return
+            trajectory = entity.trajectory
+            if len(trajectory.points) <= 2:
+                return
+            self._push_undo(f"remove curve point {entity.id}")
+            points = list(trajectory.points)
+            points.pop(-2)
+            points = self._curve_plane_points(points)
+            entity.trajectory = TrajectorySpec(
+                kind="curve",
+                points=points,
+                bezier_handles=default_bezier_handles(points),
+                orientation_rad_points=self._trajectory_orientation_points(entity, TrajectorySpec(kind="curve", points=points), source_orientations=trajectory.orientation_rad_points),
+                samples=self.samples.value(),
+                start_static_fraction=trajectory.start_static_fraction,
+                end_static_fraction=trajectory.end_static_fraction,
+                easing=trajectory.easing,
+            )
+            self._set_trajectory_controls(entity.trajectory)
+            self.refresh(reset_camera=False)
+
+        def _curve_plane_points(self, points):
+            if not points:
+                return []
+            plane_z = float(points[0][2])
+            return [(float(point[0]), float(point[1]), plane_z) for point in points]
+
+        def _shift_curve_point_handles(self, trajectory, point_index, old_point, new_point, points):
+            if trajectory.kind != "curve":
+                return list(trajectory.bezier_handles)
+            handles = normalized_bezier_handles(trajectory)
+            delta = np.asarray(new_point, dtype=np.float64) - np.asarray(old_point, dtype=np.float64)
+            plane_z = float(points[0][2])
+            shifted = []
+            for index, (handle_in, handle_out) in enumerate(handles):
+                if index == point_index:
+                    handle_in = tuple((np.asarray(handle_in, dtype=np.float64) + delta).tolist())
+                    handle_out = tuple((np.asarray(handle_out, dtype=np.float64) + delta).tolist())
+                shifted.append((
+                    (float(handle_in[0]), float(handle_in[1]), plane_z),
+                    (float(handle_out[0]), float(handle_out[1]), plane_z),
+                ))
+            return shifted
 
         def apply_trajectory(self):
             entity = self._find_selected_entity()
@@ -1086,8 +1263,6 @@ def main() -> int:
                 output_dir=self.output_dir,
                 dry_run=self.dry_run.isChecked(),
             )
-            if request.scene.radiomap.enabled:
-                request.scene.user_equipments = []
             request.channel_mode = ChannelMode(self.channel_mode.currentData())
             request.bands = parse_band_specs(self.band_specs.text())
             request.sionna.samples_per_src = self.samples_per_src.value()
@@ -1328,6 +1503,16 @@ def main() -> int:
         for label, widget in rows:
             form.addRow(label, widget)
         return group
+
+    def _inline(*widgets):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        for widget in widgets:
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        return container
 
     def _spin(minimum, maximum, value):
         widget = QSpinBox()

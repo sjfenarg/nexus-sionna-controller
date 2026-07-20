@@ -222,6 +222,34 @@ def test_reference_writer_exports_radiomap_positions(tmp_path):
         )
 
 
+def test_reference_writer_exports_curve_bezier_handles(tmp_path):
+    request = SimulationRequest(dry_run=True, output_dir=tmp_path)
+    request.scene.ensure_defaults()
+    request.scene.user_equipments[0].trajectory = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (10.0, 0.0, 1.5)],
+        bezier_handles=[
+            ((0.0, 0.0, 1.5), (0.0, 5.0, 1.5)),
+            ((10.0, 5.0, 1.5), (10.0, 0.0, 1.5)),
+        ],
+        samples=4,
+    )
+    result = DryRunSimulator().simulate(request)
+    out = tmp_path / "curve.h5"
+    ReferenceH5Writer().write(out, request, result)
+
+    with h5py.File(out, "r") as h5:
+        group = h5[f"scenarios/{request.scene.name}/{request.sample_id}/parameters/trajectory_params/ues/ue0"]
+        assert group.attrs["kind"] == "curve"
+        np.testing.assert_allclose(
+            group["bezier_handles"][:],
+            [
+                [[0.0, 0.0, 1.5], [0.0, 5.0, 1.5]],
+                [[10.0, 5.0, 1.5], [10.0, 0.0, 1.5]],
+            ],
+        )
+
+
 def test_reference_writer_exports_radiomap_with_object_trajectory_positions(tmp_path):
     request = SimulationRequest(dry_run=True, output_dir=tmp_path)
     request.scene.radiomap = RadiomapConfig(
@@ -310,6 +338,8 @@ def test_reference_writer_exports_frequency_channel_axis_metadata(tmp_path):
         assert channel.attrs["sample_axis"] == "frequency_hz"
         assert channel.attrs["frequency_points"] == 4
         np.testing.assert_allclose(channel["sample_coordinates"][:], request.bands[0].vector())
+        assert "tau" not in sample["timeframes/tf000"]
+        assert "a" not in sample["timeframes/tf000"]
 
 
 def test_reference_writer_exports_delay_bin_channel_axis_metadata(tmp_path):

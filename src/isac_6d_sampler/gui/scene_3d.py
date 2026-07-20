@@ -10,14 +10,14 @@ from PySide6.QtGui import QMatrix4x4, QVector3D
 import pyqtgraph.opengl as gl
 
 from isac_6d_sampler.core.antenna_patterns import antenna_pattern_spec
-from isac_6d_sampler.core.model import DYNAMIC_SCENE_OBJECT_NAMES, RadiomapConfig, SceneDesign
+from isac_6d_sampler.core.model import DYNAMIC_SCENE_OBJECT_NAMES, RadiomapConfig, SceneDesign, TrajectorySpec
 from isac_6d_sampler.core.scenarios import (
     MeshBounds,
     ScenarioAsset,
     _struct_format,
     _xyz_property_indices,
 )
-from isac_6d_sampler.core.trajectories import sample_radiomap_preview_grid
+from isac_6d_sampler.core.trajectories import normalized_bezier_handles, sample_radiomap_preview_grid, sample_trajectory
 
 
 _AXES = {
@@ -52,6 +52,7 @@ class Scene3DView(gl.GLViewWidget):
         on_moved=None,
         on_transform_started=None,
         on_trajectory_point_moved=None,
+        on_trajectory_handle_moved=None,
         on_trajectory_endpoint_transformed=None,
         on_trajectory_transform_started=None,
         on_radiomap_bounds_changed=None,
@@ -67,6 +68,7 @@ class Scene3DView(gl.GLViewWidget):
         self._on_moved = on_moved
         self._on_transform_started = on_transform_started
         self._on_trajectory_point_moved = on_trajectory_point_moved
+        self._on_trajectory_handle_moved = on_trajectory_handle_moved
         self._on_trajectory_endpoint_transformed = on_trajectory_endpoint_transformed
         self._on_trajectory_transform_started = on_trajectory_transform_started
         self._on_radiomap_bounds_changed = on_radiomap_bounds_changed
@@ -165,6 +167,21 @@ class Scene3DView(gl.GLViewWidget):
                     self._on_radiomap_transform_started()
                 event.accept()
                 return
+            if self._selected_trajectory_kind() == "curve":
+                state = self._begin_trajectory_handle_drag(event.position().x(), event.position().y())
+                if state is not None:
+                    self._drag_state = state
+                    if self._on_trajectory_transform_started is not None:
+                        self._on_trajectory_transform_started(state["entity_id"])
+                    event.accept()
+                    return
+                state = self._begin_trajectory_point_drag(event.position().x(), event.position().y())
+                if state is not None:
+                    self._drag_state = state
+                    if self._on_trajectory_transform_started is not None:
+                        self._on_trajectory_transform_started(state["entity_id"])
+                    event.accept()
+                    return
             state = self._begin_gizmo_drag(event.position().x(), event.position().y())
             if state is not None:
                 self._drag_state = state
@@ -174,13 +191,21 @@ class Scene3DView(gl.GLViewWidget):
                     self._on_transform_started(self._selected_id)
                 event.accept()
                 return
-            state = self._begin_trajectory_point_drag(event.position().x(), event.position().y())
-            if state is not None:
-                self._drag_state = state
-                if self._on_trajectory_transform_started is not None:
-                    self._on_trajectory_transform_started(state["entity_id"])
-                event.accept()
-                return
+            if self._selected_trajectory_kind() != "curve":
+                state = self._begin_trajectory_handle_drag(event.position().x(), event.position().y())
+                if state is not None:
+                    self._drag_state = state
+                    if self._on_trajectory_transform_started is not None:
+                        self._on_trajectory_transform_started(state["entity_id"])
+                    event.accept()
+                    return
+                state = self._begin_trajectory_point_drag(event.position().x(), event.position().y())
+                if state is not None:
+                    self._drag_state = state
+                    if self._on_trajectory_transform_started is not None:
+                        self._on_trajectory_transform_started(state["entity_id"])
+                    event.accept()
+                    return
             selected_id = self._pick_entity(event.position().x(), event.position().y())
             if selected_id is not None:
                 if self._on_selected is not None:
@@ -232,8 +257,35 @@ class Scene3DView(gl.GLViewWidget):
                     self._rebuild_dynamic_items()
                 event.accept()
                 return
+            if self._drag_state.get("target") == "trajectory_handle":
+                position = self._drag_trajectory_xy(
+                    event.position().x(),
+                    event.position().y(),
+                    self._drag_state,
+                )
+                if position is not None:
+                    if self._on_trajectory_handle_moved is not None:
+                        self._on_trajectory_handle_moved(
+                            self._drag_state["entity_id"],
+                            self._drag_state["point_index"],
+                            self._drag_state["handle_side"],
+                            position,
+                        )
+                    else:
+                        entity = self._selected_entity()
+                        if entity is not None and hasattr(entity, "trajectory"):
+                            handles = normalized_bezier_handles(entity.trajectory)
+                            handle_in, handle_out = handles[self._drag_state["point_index"]]
+                            if self._drag_state["handle_side"] == "in":
+                                handles[self._drag_state["point_index"]] = (tuple(float(value) for value in position), handle_out)
+                            else:
+                                handles[self._drag_state["point_index"]] = (handle_in, tuple(float(value) for value in position))
+                            entity.trajectory.bezier_handles = handles
+                    self._rebuild_dynamic_items()
+                event.accept()
+                return
             if self._drag_state["kind"] == "trajectory_point":
-                position = self._drag_trajectory_point(
+                position = self._drag_trajectory_xy(
                     event.position().x(),
                     event.position().y(),
                     self._drag_state,
@@ -353,6 +405,9 @@ class Scene3DView(gl.GLViewWidget):
                 points.append(entity.position)
                 if hasattr(entity, "trajectory"):
                     points.extend(entity.trajectory.points)
+                    if entity.trajectory.kind == "curve":
+                        for handle_in, handle_out in normalized_bezier_handles(entity.trajectory):
+                            points.extend([handle_in, handle_out])
         if self._radiomap and self._radiomap.enabled:
             z = self._radiomap.height
             points.extend(
@@ -425,7 +480,7 @@ class Scene3DView(gl.GLViewWidget):
         if self._asset is None:
             return
         for mesh in self._dynamic_meshes():
-            vertices, faces = _load_ply_mesh(str(mesh.path), _mtime(mesh.path))
+            vertices, faces = _load_mesh_preview(str(mesh.path), _mtime(mesh.path))
             if vertices.size == 0 or faces.size == 0:
                 continue
             for rendered_vertices in self._mesh_render_vertices(mesh, vertices):
@@ -442,7 +497,7 @@ class Scene3DView(gl.GLViewWidget):
                 self._add_dynamic_item(item)
 
     def _mesh_render_vertices(self, mesh, vertices: np.ndarray) -> tuple[np.ndarray, ...]:
-        if mesh.name not in DYNAMIC_SCENE_OBJECT_NAMES or self._design is None:
+        if self._design is None:
             return (vertices,)
         objects = [obj for obj in self._design.objects if obj.object_name == mesh.name]
         if not objects:
@@ -473,11 +528,17 @@ class Scene3DView(gl.GLViewWidget):
             obj.object_name
             for obj in self._design.objects
         } if self._design is not None else set()
-        return tuple(
+        xml_meshes = tuple(
             mesh
             for mesh in self._asset.meshes
             if mesh.name in DYNAMIC_SCENE_OBJECT_NAMES and mesh.name in active_dynamic_objects
         )
+        external_meshes = tuple(
+            mesh
+            for mesh in getattr(self._asset, "object_meshes", ())
+            if mesh.name in active_dynamic_objects
+        )
+        return (*xml_meshes, *external_meshes)
 
     def _add_entities(self) -> None:
         if self._design is None:
@@ -617,31 +678,37 @@ class Scene3DView(gl.GLViewWidget):
         for entity in [*self._visible_user_equipments(), *self._design.objects]:
             if len(entity.trajectory.points) < 2:
                 continue
+            positions = _trajectory_preview_positions(entity.trajectory)
             item = gl.GLLinePlotItem(
-                pos=np.asarray(entity.trajectory.points, dtype=np.float32),
+                pos=positions.astype(np.float32),
                 color=(0.0, 0.7, 0.8, 1.0),
                 width=3.0,
                 antialias=True,
                 mode="line_strip",
             )
             self._add_dynamic_item(item)
+            if entity.id == self._selected_id and entity.trajectory.kind == "curve":
+                self._add_curve_tangent_pointing(positions)
 
     def _add_trajectory_handles(self) -> None:
         entity = self._selected_entity()
         if entity is None or not hasattr(entity, "trajectory"):
             return
         trajectory = entity.trajectory
-        if trajectory.kind != "linear" or len(trajectory.points) < 2:
+        if trajectory.kind not in {"linear", "polyline", "curve"} or len(trajectory.points) < 2:
             return
-        endpoint = np.asarray([trajectory.points[1]], dtype=np.float32)
+        editable_points = np.asarray(trajectory.points[1:], dtype=np.float32)
         self._add_dynamic_item(
             gl.GLScatterPlotItem(
-                pos=endpoint,
+                pos=editable_points,
                 color=(1.0, 0.05, 0.78, 1.0),
                 size=14.0,
                 pxMode=True,
             )
         )
+        if trajectory.kind == "curve":
+            self._add_curve_control_handles(trajectory)
+        endpoint = np.asarray([trajectory.points[-1]], dtype=np.float32)
         orientation = self._trajectory_endpoint_orientation(entity)
         axes = _local_axes(orientation)
         forward = axes["x"].astype(np.float32)
@@ -669,6 +736,55 @@ class Scene3DView(gl.GLViewWidget):
                 ).astype(np.float32),
                 color=color,
                 width=2.2,
+                antialias=True,
+                mode="lines",
+            )
+        )
+
+    def _add_curve_control_handles(self, trajectory) -> None:
+        handles = normalized_bezier_handles(trajectory)
+        handle_points = []
+        connector_segments = []
+        last_index = len(trajectory.points) - 1
+        for index, (point, (handle_in, handle_out)) in enumerate(zip(trajectory.points, handles, strict=True)):
+            point_array = np.asarray(point, dtype=np.float64)
+            if index > 0:
+                handle_in_array = np.asarray(handle_in, dtype=np.float64)
+                handle_points.append(handle_in_array)
+                connector_segments.extend([point_array, handle_in_array])
+            if index < last_index:
+                handle_out_array = np.asarray(handle_out, dtype=np.float64)
+                handle_points.append(handle_out_array)
+                connector_segments.extend([point_array, handle_out_array])
+        if connector_segments:
+            self._add_dynamic_item(
+                gl.GLLinePlotItem(
+                    pos=np.asarray(connector_segments, dtype=np.float32),
+                    color=(0.45, 0.1, 0.75, 0.76),
+                    width=1.8,
+                    antialias=True,
+                    mode="lines",
+                )
+            )
+        if handle_points:
+            self._add_dynamic_item(
+                gl.GLScatterPlotItem(
+                    pos=np.asarray(handle_points, dtype=np.float32),
+                    color=(0.55, 0.0, 1.0, 1.0),
+                    size=10.0,
+                    pxMode=True,
+                )
+            )
+
+    def _add_curve_tangent_pointing(self, positions: np.ndarray) -> None:
+        segments = _curve_tangent_arrow_segments(positions, self._pointing_length() * 0.42)
+        if len(segments) == 0:
+            return
+        self._add_dynamic_item(
+            gl.GLLinePlotItem(
+                pos=segments.astype(np.float32),
+                color=(1.0, 0.72, 0.0, 0.95),
+                width=2.4,
                 antialias=True,
                 mode="lines",
             )
@@ -747,6 +863,12 @@ class Scene3DView(gl.GLViewWidget):
             if entity.id == self._selected_id:
                 return entity
         return None
+
+    def _selected_trajectory_kind(self) -> str | None:
+        entity = self._selected_entity()
+        if entity is None or not hasattr(entity, "trajectory"):
+            return None
+        return entity.trajectory.kind
 
     def _pick_entity(self, x: float, y: float) -> str | None:
         if self._design is None:
@@ -849,7 +971,7 @@ class Scene3DView(gl.GLViewWidget):
                     y,
                     target="trajectory_endpoint",
                     entity_id=entity.id,
-                    point_index=1,
+                    point_index=len(entity.trajectory.points) - 1,
                 )
         handle = self._pick_gizmo_handle(x, y)
         if handle is None:
@@ -924,54 +1046,118 @@ class Scene3DView(gl.GLViewWidget):
         if entity is None or not hasattr(entity, "trajectory"):
             return None
         trajectory = entity.trajectory
-        if trajectory.kind != "linear" or len(trajectory.points) < 2:
+        if trajectory.kind not in {"linear", "polyline", "curve"} or len(trajectory.points) < 2:
             return None
-        point_index = 1
+        point_index = self._pick_trajectory_anchor(x, y, trajectory)
+        if point_index is None:
+            return None
         start = np.asarray(trajectory.points[point_index], dtype=np.float64)
-        screen = self._project_to_screen(start)
-        if screen is None or _screen_distance((x, y), screen) > 16.0:
-            return None
-        basis = self._camera_plane_drag_basis(start)
-        if basis is None:
-            return None
-        right, up, world_per_pixel = basis
+        drag_state = self._trajectory_xy_drag_state(trajectory, start, x, y)
         return {
             "kind": "trajectory_point",
             "target": "trajectory_point",
             "entity_id": entity.id,
             "point_index": point_index,
             "start": start,
-            "mouse_start": np.asarray([x, y], dtype=np.float64),
-            "right": right,
-            "up": up,
-            "world_per_pixel": world_per_pixel,
+            **drag_state,
         }
 
     def _trajectory_endpoint_pose(self, entity) -> tuple[np.ndarray, tuple[float, float, float]] | None:
         if not hasattr(entity, "trajectory"):
             return None
         trajectory = entity.trajectory
-        if trajectory.kind != "linear" or len(trajectory.points) < 2:
+        if trajectory.kind == "curve":
+            return None
+        if trajectory.kind not in {"linear", "polyline"} or len(trajectory.points) < 2:
             return None
         return (
-            np.asarray(trajectory.points[1], dtype=np.float64),
+            np.asarray(trajectory.points[-1], dtype=np.float64),
             self._trajectory_endpoint_orientation(entity),
         )
 
     def _trajectory_endpoint_orientation(self, entity) -> tuple[float, float, float]:
         trajectory = entity.trajectory
-        if len(trajectory.orientation_rad_points) >= 2:
-            return tuple(float(value) for value in trajectory.orientation_rad_points[1])
+        if len(trajectory.orientation_rad_points) >= len(trajectory.points):
+            return tuple(float(value) for value in trajectory.orientation_rad_points[-1])
         if len(trajectory.orientation_rad_points) == 1:
             return tuple(float(value) for value in trajectory.orientation_rad_points[0])
         return tuple(float(value) for value in entity.orientation_rad)
 
-    def _drag_trajectory_point(self, x: float, y: float, state: dict) -> np.ndarray | None:
+    def _begin_trajectory_handle_drag(self, x: float, y: float) -> dict | None:
+        entity = self._selected_entity()
+        if entity is None or not hasattr(entity, "trajectory"):
+            return None
+        trajectory = entity.trajectory
+        if trajectory.kind != "curve" or len(trajectory.points) < 2:
+            return None
+        picked = self._pick_trajectory_handle(x, y, trajectory)
+        if picked is None:
+            return None
+        point_index, handle_side, start = picked
+        return {
+            "kind": "trajectory_handle",
+            "target": "trajectory_handle",
+            "entity_id": entity.id,
+            "point_index": point_index,
+            "handle_side": handle_side,
+            "start": start,
+            **self._trajectory_xy_drag_state(trajectory, start, x, y),
+        }
+
+    def _pick_trajectory_anchor(self, x: float, y: float, trajectory) -> int | None:
+        best_index = None
+        best_distance = None
+        for point_index, point in enumerate(trajectory.points[1:], start=1):
+            screen = self._project_to_screen(point)
+            if screen is None:
+                continue
+            distance = _screen_distance((x, y), screen)
+            if distance <= 16.0 and (best_distance is None or distance < best_distance):
+                best_index = point_index
+                best_distance = distance
+        return best_index
+
+    def _pick_trajectory_handle(self, x: float, y: float, trajectory) -> tuple[int, str, np.ndarray] | None:
+        best = None
+        best_distance = None
+        for point_index, (handle_in, handle_out) in enumerate(normalized_bezier_handles(trajectory)):
+            for side, point in (("in", handle_in), ("out", handle_out)):
+                if (point_index == 0 and side == "in") or (point_index == len(trajectory.points) - 1 and side == "out"):
+                    continue
+                screen = self._project_to_screen(point)
+                if screen is None:
+                    continue
+                distance = _screen_distance((x, y), screen)
+                if distance <= 14.0 and (best_distance is None or distance < best_distance):
+                    best = (point_index, side, np.asarray(point, dtype=np.float64))
+                    best_distance = distance
+        return best
+
+    def _trajectory_xy_drag_state(self, trajectory, start: np.ndarray, x: float, y: float) -> dict:
+        screen_origin = self._project_to_screen(start)
+        screen_x = self._project_to_screen(start + _AXES["x"])
+        screen_y = self._project_to_screen(start + _AXES["y"])
+        return {
+            "mouse_start": np.asarray([x, y], dtype=np.float64),
+            "screen_x_axis": _screen_unit_vector(screen_origin, screen_x),
+            "screen_y_axis": _screen_unit_vector(screen_origin, screen_y),
+            "world_per_pixel": _trajectory_world_per_pixel(trajectory),
+            "plane_z": float(trajectory.points[0][2]),
+        }
+
+    def _drag_trajectory_xy(self, x: float, y: float, state: dict) -> np.ndarray | None:
         mouse_delta = np.asarray([x, y], dtype=np.float64) - state["mouse_start"]
-        delta = (
-            state["right"] * mouse_delta[0] - state["up"] * mouse_delta[1]
-        ) * float(state["world_per_pixel"])
-        return state["start"] + delta
+        x_axis = state.get("screen_x_axis")
+        y_axis = state.get("screen_y_axis")
+        if x_axis is None or y_axis is None:
+            x_pixels, y_pixels = float(mouse_delta[0]), float(-mouse_delta[1])
+        else:
+            x_pixels, y_pixels = _screen_plane_components(mouse_delta, x_axis, y_axis)
+        point = np.asarray(state["start"], dtype=np.float64).copy()
+        point[0] += x_pixels * float(state["world_per_pixel"])
+        point[1] += y_pixels * float(state["world_per_pixel"])
+        point[2] = float(state["plane_z"])
+        return point
 
     def _camera_plane_drag_basis(self, point: np.ndarray) -> tuple[np.ndarray, np.ndarray, float] | None:
         camera = self.cameraPosition()
@@ -1124,6 +1310,20 @@ class Scene3DView(gl.GLViewWidget):
 
 
 @lru_cache(maxsize=64)
+def _load_mesh_preview(
+    path_text: str,
+    _mtime_value: float,
+    max_faces: int = 120_000,
+) -> tuple[np.ndarray, np.ndarray]:
+    suffix = Path(path_text).suffix.lower()
+    if suffix == ".ply":
+        return _load_ply_mesh(path_text, _mtime_value, max_faces=max_faces)
+    if suffix == ".obj":
+        return _load_obj_mesh(path_text, _mtime_value, max_faces=max_faces)
+    return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.int32)
+
+
+@lru_cache(maxsize=64)
 def _load_ply_mesh(
     path_text: str,
     _mtime_value: float,
@@ -1158,6 +1358,55 @@ def _load_ply_mesh(
         indices = np.linspace(0, len(triangles) - 1, max_faces, dtype=np.int64)
         triangles = triangles[indices]
     return vertices.astype(np.float32), triangles.astype(np.int32)
+
+
+@lru_cache(maxsize=64)
+def _load_obj_mesh(
+    path_text: str,
+    _mtime_value: float,
+    max_faces: int = 120_000,
+) -> tuple[np.ndarray, np.ndarray]:
+    path = Path(path_text)
+    if not path.exists():
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.int32)
+    vertices: list[list[float]] = []
+    faces: list[list[int]] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("v "):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                elif line.startswith("f "):
+                    parts = line.split()[1:]
+                    face = [_obj_vertex_index(part, len(vertices)) for part in parts]
+                    face = [index for index in face if index is not None]
+                    if len(face) >= 3:
+                        faces.append(face)
+    except (OSError, ValueError):
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.int32)
+    if not vertices or not faces:
+        return np.empty((0, 3), dtype=np.float32), np.empty((0, 3), dtype=np.int32)
+    triangles = _triangulate_faces(faces)
+    if len(triangles) > max_faces:
+        indices = np.linspace(0, len(triangles) - 1, max_faces, dtype=np.int64)
+        triangles = triangles[indices]
+    return np.asarray(vertices, dtype=np.float32), triangles.astype(np.int32)
+
+
+def _obj_vertex_index(token: str, vertex_count: int) -> int | None:
+    if not token:
+        return None
+    value = token.split("/", maxsplit=1)[0]
+    if not value:
+        return None
+    index = int(value)
+    if index > 0:
+        return index - 1
+    if index < 0:
+        return vertex_count + index
+    return None
 
 
 def _read_mesh_ply_header(fh) -> dict:
@@ -1553,6 +1802,60 @@ def _screen_pixels_to_world(
 def _radiomap_corner_world_per_pixel(config: RadiomapConfig) -> float:
     span = max(abs(float(config.x_max) - float(config.x_min)), abs(float(config.y_max) - float(config.y_min)), 10.0)
     return span / 500.0
+
+
+def _trajectory_preview_positions(trajectory: TrajectorySpec) -> np.ndarray:
+    if trajectory.kind != "curve":
+        return np.asarray(trajectory.points, dtype=np.float64)
+    preview = TrajectorySpec(
+        kind="curve",
+        points=list(trajectory.points),
+        bezier_handles=normalized_bezier_handles(trajectory),
+        samples=max(96, int(trajectory.samples)),
+        start_static_fraction=0.0,
+        end_static_fraction=0.0,
+        easing="linear",
+    )
+    return sample_trajectory(preview)
+
+
+def _trajectory_world_per_pixel(trajectory) -> float:
+    points = list(trajectory.points)
+    if trajectory.kind == "curve":
+        for handle_in, handle_out in normalized_bezier_handles(trajectory):
+            points.extend([handle_in, handle_out])
+    values = np.asarray(points, dtype=np.float64)
+    if values.size == 0:
+        return 0.01
+    span = np.ptp(values[:, :2], axis=0)
+    return max(float(np.max(span)), 5.0) / 420.0
+
+
+def _curve_tangent_arrow_segments(positions: np.ndarray, length: float, max_arrows: int = 12) -> np.ndarray:
+    positions = np.asarray(positions, dtype=np.float64)
+    if len(positions) < 2:
+        return np.empty((0, 3), dtype=np.float64)
+    count = min(max_arrows, max(1, len(positions) // 8))
+    indices = np.linspace(0, len(positions) - 1, count, dtype=np.int64)
+    tangents = np.zeros_like(positions)
+    tangents[0] = positions[1] - positions[0]
+    tangents[-1] = positions[-1] - positions[-2]
+    if len(positions) > 2:
+        tangents[1:-1] = positions[2:] - positions[:-2]
+    tangents[:, 2] = 0.0
+    segments = []
+    for index in indices:
+        tangent = _normalized(tangents[index])
+        if float(np.linalg.norm(tangent)) <= 1e-12:
+            continue
+        origin = positions[index]
+        tip = origin + tangent * length
+        side = _normalized(np.cross(_AXES["z"], tangent))
+        if float(np.linalg.norm(side)) <= 1e-12:
+            side = _AXES["y"]
+        segments.extend([origin, tip])
+        segments.extend(_arrowhead_segments(tip, tangent, side, _AXES["z"], length * 0.55))
+    return np.asarray(segments, dtype=np.float64)
 
 
 def _axis_view_angles(axis: str, sign: int) -> tuple[float, float]:

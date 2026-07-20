@@ -1,0 +1,489 @@
+{
+  "scene": {
+    "name": "Outdoor6D_w_car",
+    "scenario_path": "scenarios\\Outdoor6D_w_car.xml",
+    "description": "Calibrated Outdoor 6D digital twin",
+    "base_stations": [
+      {
+        "id": "bs0",
+        "position": [
+          52.353,
+          -19.516,
+          19.203
+        ],
+        "orientation_rad": [
+          -3.7142785974809467,
+          0.3582395490668812,
+          1.5959588161372669
+        ],
+        "panel": {
+          "rows": 10,
+          "cols": 10,
+          "pattern": "isac_horn_77_81",
+          "polarization": "V",
+          "vertical_spacing_m": 0.001897,
+          "horizontal_spacing_m": 0.001897,
+          "element_diagram": "isac_horn_77_81",
+          "orientation_rad": [
+            -3.7142785974809467,
+            0.0,
+            1.5959588161372669
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        }
+      }
+    ],
+    "user_equipments": [
+      {
+        "id": "ue0",
+        "position": [
+          -17.084573226201236,
+          -12.048398600027681,
+          0.051407813624270784
+        ],
+        "orientation_rad": [
+          -0.0021895686207257323,
+          0.0,
+          1.6320750535708795
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "isac_horn_77_81",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "isac_horn_77_81",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "linear",
+          "points": [
+            [
+              -17.084573226201236,
+              -12.048398600027681,
+              0.051407813624270784
+            ],
+            [
+              11.004339337535537,
+              -13.774333730355043,
+              0.6079378039480698
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [
+            [
+              -0.0021895686207257323,
+              0.0,
+              1.6320750535708795
+            ],
+            [
+              0.0,
+              -0.02868422485334634,
+              1.6320750535708795
+            ]
+          ],
+          "samples": 8,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue1",
+        "position": [
+          0.11966929657342162,
+          0.11075741370636383,
+          0.7981983107198979
+        ],
+        "orientation_rad": [
+          -0.002,
+          0.0,
+          1.632
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "isac_horn_77_81",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "isac_horn_77_81",
+          "orientation_rad": [
+            -0.002,
+            0.0,
+            1.632
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "curve",
+          "points": [
+            [
+              0.11966929657342162,
+              0.11075741370636383,
+              0.7981983107198979
+            ],
+            [
+              36.897524596532385,
+              21.390148009461363,
+              0.7981983107198979
+            ]
+          ],
+          "bezier_handles": [
+            [
+              [
+                0.11966929657342162,
+                0.11075741370636383,
+                0.7981983107198979
+              ],
+              [
+                -0.5431238814058219,
+                21.12970117309102,
+                0.7981983107198979
+              ]
+            ],
+            [
+              [
+                11.25186092271931,
+                20.207654400872062,
+                0.7981983107198979
+              ],
+              [
+                36.897524596532385,
+                21.390148009461363,
+                0.7981983107198979
+              ]
+            ]
+          ],
+          "orientation_rad_points": [
+            [
+              -0.002,
+              0.0,
+              1.632
+            ],
+            [
+              -0.002,
+              0.0,
+              1.632
+            ]
+          ],
+          "samples": 8,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue2",
+        "position": [
+          -22.735989091402317,
+          17.590114172671708,
+          1.8663203830384005
+        ],
+        "orientation_rad": [
+          -0.002,
+          0.0,
+          1.632
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "isac_horn_77_81",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "isac_horn_77_81",
+          "orientation_rad": [
+            -0.002,
+            0.0,
+            1.632
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "curve",
+          "points": [
+            [
+              -22.735989091402317,
+              17.590114172671708,
+              1.8663203830384005
+            ],
+            [
+              -2.47937956431525,
+              -22.928457691374188,
+              1.8663203830384005
+            ]
+          ],
+          "bezier_handles": [
+            [
+              [
+                -22.735989091402317,
+                17.590114172671708,
+                1.8663203830384005
+              ],
+              [
+                -7.531210805913908,
+                8.311962310294158,
+                1.8663203830384005
+              ]
+            ],
+            [
+              [
+                0.8132352408968493,
+                20.65725493127674,
+                1.8663203830384005
+              ],
+              [
+                -2.47937956431525,
+                -22.928457691374188,
+                1.8663203830384005
+              ]
+            ]
+          ],
+          "orientation_rad_points": [
+            [
+              -0.002,
+              0.0,
+              1.632
+            ],
+            [
+              -0.002,
+              0.0,
+              1.632
+            ]
+          ],
+          "samples": 8,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue3",
+        "position": [
+          -45.33791528177469,
+          -16.404310132667757,
+          -0.21994434875499047
+        ],
+        "orientation_rad": [
+          -0.002,
+          0.0,
+          1.632
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "isac_horn_77_81",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "isac_horn_77_81",
+          "orientation_rad": [
+            -0.002,
+            0.0,
+            1.632
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "curve",
+          "points": [
+            [
+              -45.33791528177469,
+              -16.404310132667757,
+              -0.21994434875499047
+            ],
+            [
+              35.499166357946685,
+              -16.520601952391807,
+              -0.21994434875499047
+            ],
+            [
+              44.77210992064073,
+              22.550712906067933,
+              -0.21994434875499047
+            ]
+          ],
+          "bezier_handles": [
+            [
+              [
+                -45.33791528177469,
+                -16.404310132667757,
+                -0.21994434875499047
+              ],
+              [
+                -40.39063947521204,
+                -13.337464845528226,
+                -0.21994434875499047
+              ]
+            ],
+            [
+              [
+                25.60461474482138,
+                -22.654292526670883,
+                -0.21994434875499047
+              ],
+              [
+                48.780253006574426,
+                -6.40781059563547,
+                -0.21994434875499047
+              ]
+            ],
+            [
+              [
+                44.932156387919264,
+                14.6353773874789,
+                -0.21994434875499047
+              ],
+              [
+                44.77210992064073,
+                22.550712906067933,
+                -0.21994434875499047
+              ]
+            ]
+          ],
+          "orientation_rad_points": [
+            [
+              -0.002,
+              0.0,
+              1.632
+            ],
+            [
+              -0.002,
+              0.0,
+              1.632
+            ],
+            [
+              -0.002,
+              0.0,
+              1.632
+            ]
+          ],
+          "samples": 8,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      }
+    ],
+    "objects": [],
+    "radiomap": {
+      "enabled": false,
+      "x_min": -10.0,
+      "x_max": 10.0,
+      "y_min": -10.0,
+      "y_max": 10.0,
+      "x_spacing": 1.0,
+      "y_spacing": 1.0,
+      "height": 1.5,
+      "ue_template": {
+        "id": "rm_ue",
+        "position": [
+          0.0,
+          0.0,
+          1.5
+        ],
+        "orientation_rad": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "iso",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "iso",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              0.0,
+              0.0,
+              1.5
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      }
+    }
+  },
+  "bands": [
+    {
+      "name": "77-81GHz",
+      "start_hz": 77000000000.0,
+      "stop_hz": 81000000000.0,
+      "points": 2001
+    }
+  ],
+  "channel_mode": "frequency_domain",
+  "sionna": {
+    "tx_power_dbm": 44.0,
+    "samples_per_src": 500000,
+    "max_depth": 3,
+    "max_num_paths_per_src": 100000,
+    "seed": null,
+    "los": true,
+    "specular_reflection": true,
+    "diffuse_reflection": true,
+    "refraction": false,
+    "synthetic_array": false,
+    "merge_shapes": false,
+    "use_gpu": true,
+    "batch_timeframes": 1,
+    "max_timeframes": 100000
+  },
+  "output_dir": "output",
+  "sample_id": "s000",
+  "dry_run": false
+}

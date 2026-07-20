@@ -74,8 +74,9 @@ class AntennaPanel:
 
 @dataclass(slots=True)
 class TrajectorySpec:
-    kind: Literal["static", "linear", "polyline"] = "static"
+    kind: Literal["static", "linear", "polyline", "curve"] = "static"
     points: list[Vector3] = field(default_factory=lambda: [(0.0, 0.0, 0.0)])
+    bezier_handles: list[tuple[Vector3, Vector3]] = field(default_factory=list)
     orientation_rad_points: list[Vector3] = field(default_factory=list)
     samples: int = 1
     start_static_fraction: float = 0.0

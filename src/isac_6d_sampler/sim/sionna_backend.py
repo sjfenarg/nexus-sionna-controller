@@ -11,7 +11,14 @@ from xml.etree import ElementTree
 import numpy as np
 
 from isac_6d_sampler.core.antenna_patterns import register_sionna_antenna_patterns
-from isac_6d_sampler.core.model import ChannelMode, DYNAMIC_SCENE_OBJECT_NAMES, SPEED_OF_LIGHT_M_PER_S, SimulationRequest
+from isac_6d_sampler.core.model import (
+    BaseStation,
+    ChannelMode,
+    DYNAMIC_SCENE_OBJECT_NAMES,
+    SPEED_OF_LIGHT_M_PER_S,
+    SimulationRequest,
+    UserEquipment,
+)
 from isac_6d_sampler.core.validation import validate_request
 from isac_6d_sampler.sim.channel import render_channel_samples
 from isac_6d_sampler.sim.power import dbm_to_watt, field_amplitude_from_dbm
@@ -67,9 +74,11 @@ class SionnaSimulator:
         scene.frequency = float(np.mean(frequency_vector))
         scene.bandwidth = float(frequency_vector[-1] - frequency_vector[0])
         assign_calibrated_materials(scene, scene_design.name)
+        self._add_external_object_meshes(scene, scene_design)
 
         plan = build_simulation_plan(scene_design)
         result_frames: list[TimeframeResult] = []
+        radiomap_link_cache: dict[tuple, LinkResult] = {}
         batch_size = max(1, int(request.sionna.batch_timeframes))
         tf_idx = 0
         while tf_idx < len(plan.timeframes):
@@ -92,6 +101,7 @@ class SionnaSimulator:
                     request=request,
                     progress=progress,
                     progress_total=len(plan.timeframes),
+                    radiomap_link_cache=radiomap_link_cache,
                 )
             )
             tf_idx += len(chunk)
@@ -121,6 +131,7 @@ class SionnaSimulator:
         request: SimulationRequest,
         progress: ProgressCallback | None = None,
         progress_total: int | None = None,
+        radiomap_link_cache: dict[tuple, LinkResult] | None = None,
     ) -> list[TimeframeResult]:
         frame_links = self._solve_all_links_for_timeframes(
             scene=scene,
@@ -130,6 +141,7 @@ class SionnaSimulator:
             request=request,
             progress=progress,
             progress_total=progress_total or (start_index + len(timeframes)),
+            radiomap_link_cache=radiomap_link_cache,
         )
         return [
             TimeframeResult(
@@ -170,6 +182,7 @@ class SionnaSimulator:
         request: SimulationRequest,
         progress: ProgressCallback | None = None,
         progress_total: int | None = None,
+        radiomap_link_cache: dict[tuple, LinkResult] | None = None,
     ) -> list[list[LinkResult]]:
         from sionna.rt import PathSolver, PlanarArray, Receiver, Transmitter
 
@@ -179,8 +192,15 @@ class SionnaSimulator:
 
         batches = _build_timeframe_link_batches(timeframes, start_index, request.sionna.los)
         for batch_index, batch in enumerate(batches):
+            if radiomap_link_cache is not None and _append_cached_radiomap_links(
+                frame_links,
+                batch,
+                start_index,
+                radiomap_link_cache,
+            ):
+                continue
             cleanup_names: list[str] = []
-            representative = batch.refs[0].link
+            representative = _solver_link(batch.refs[0].link)
             self._configure_arrays(
                 scene,
                 PlanarArray,
@@ -189,6 +209,7 @@ class SionnaSimulator:
             )
             rx_local = _local_device_index(batch.rx_devices, batch.refs, side="rx")
             tx_local = _local_device_index(batch.tx_devices, batch.refs, side="tx")
+            reciprocal_cache: dict[tuple[int, str, str], tuple[np.ndarray, np.ndarray | None, np.ndarray | None]] = {}
 
             try:
                 if progress is not None:
@@ -200,7 +221,7 @@ class SionnaSimulator:
                 for idx, (tf_abs_idx, timeframe, tx_device) in enumerate(batch.tx_devices):
                     tx_name = f"TX_{idx}_tf{tf_abs_idx}_{tx_device.id}"
                     tx_position = position_for(tx_device, timeframe)
-                    if _tx_is_only_monostatic_in_batch(batch.refs, tf_abs_idx, tx_device.id):
+                    if _should_offset_monostatic_tx(batch.refs, tf_abs_idx, tx_device):
                         tx_position = _offset_monostatic_tx_position(tx_position, float(np.mean(f_vector)))
                     transmitter = Transmitter(
                         name=tx_name,
@@ -234,28 +255,46 @@ class SionnaSimulator:
                 )
                 for ref in batch.refs:
                     link = ref.link
-                    h, path_delays, path_coefficients = _paths_to_link_data(
-                        paths,
-                        f_vector,
-                        request,
-                        link,
-                        rx_local_index=rx_local[(ref.timeframe_index, link.rx.id)],
-                        tx_local_index=tx_local[(ref.timeframe_index, link.tx.id)],
-                    )
-                    frame_links[ref.timeframe_index - start_index].append(
-                        LinkResult(
-                            rx_index=link.rx_index,
-                            tx_index=link.tx_index,
-                            rx_id=link.rx.id,
-                            tx_id=link.tx.id,
-                            h=h,
-                            timestamp=datetime.now(timezone.utc).isoformat(),
-                            metadata={
-                                "path_delays_s": path_delays,
-                                "path_coefficients": path_coefficients,
-                            },
+                    solver_rx = _solver_rx_device(link)
+                    solver_tx = _solver_tx_device(link)
+                    rx_local_index = rx_local[(ref.timeframe_index, solver_rx.id)]
+                    tx_local_index = tx_local[(ref.timeframe_index, solver_tx.id)]
+                    cache_key = (ref.timeframe_index, solver_rx.id, solver_tx.id)
+                    if cache_key not in reciprocal_cache:
+                        reciprocal_cache[cache_key] = _paths_to_link_data(
+                            paths,
+                            f_vector,
+                            request,
+                            _solver_link(link),
+                            rx_local_index=rx_local_index,
+                            tx_local_index=tx_local_index,
                         )
+                    h, path_delays, path_coefficients = reciprocal_cache[cache_key]
+                    if _link_uses_reverse_solver_direction(link):
+                        h, path_delays, path_coefficients = _transpose_reciprocal_link_data(
+                            h,
+                            path_delays,
+                            path_coefficients,
+                        )
+                    metadata = {}
+                    if path_delays is not None:
+                        metadata["path_delays_s"] = path_delays
+                    if path_coefficients is not None:
+                        metadata["path_coefficients"] = path_coefficients
+                    result_link = LinkResult(
+                        rx_index=link.rx_index,
+                        tx_index=link.tx_index,
+                        rx_id=link.rx.id,
+                        tx_id=link.tx.id,
+                        h=h,
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                        metadata=metadata,
                     )
+                    if radiomap_link_cache is not None:
+                        cache_key = _radiomap_bs_monostatic_cache_key(ref)
+                        if cache_key is not None:
+                            radiomap_link_cache.setdefault(cache_key, result_link)
+                    frame_links[ref.timeframe_index - start_index].append(result_link)
             finally:
                 for name in cleanup_names:
                     if name in scene.transmitters or name in scene.receivers:
@@ -263,32 +302,58 @@ class SionnaSimulator:
         return frame_links
 
     def _configure_arrays(self, scene, planar_array_cls, link: LinkPlan, frequency_hz: float) -> None:
+        tx_panel = link.tx_panel
+        rx_panel = link.rx_panel
         scene.tx_array = planar_array_cls(
-            num_rows=link.tx.panel.rows,
-            num_cols=link.tx.panel.cols,
-            vertical_spacing=_spacing_m_to_wavelengths(link.tx.panel.vertical_spacing_m, frequency_hz),
-            horizontal_spacing=_spacing_m_to_wavelengths(link.tx.panel.horizontal_spacing_m, frequency_hz),
-            pattern=_sionna_array_pattern(link.tx.panel.pattern),
-            polarization=link.tx.panel.polarization,
+            num_rows=tx_panel.rows,
+            num_cols=tx_panel.cols,
+            vertical_spacing=_spacing_m_to_wavelengths(tx_panel.vertical_spacing_m, frequency_hz),
+            horizontal_spacing=_spacing_m_to_wavelengths(tx_panel.horizontal_spacing_m, frequency_hz),
+            pattern=_sionna_array_pattern(tx_panel.pattern),
+            polarization=tx_panel.polarization,
         )
         scene.rx_array = planar_array_cls(
-            num_rows=link.rx.panel.rows,
-            num_cols=link.rx.panel.cols,
-            vertical_spacing=_spacing_m_to_wavelengths(link.rx.panel.vertical_spacing_m, frequency_hz),
-            horizontal_spacing=_spacing_m_to_wavelengths(link.rx.panel.horizontal_spacing_m, frequency_hz),
-            pattern=_sionna_array_pattern(link.rx.panel.pattern),
-            polarization=link.rx.panel.polarization,
+            num_rows=rx_panel.rows,
+            num_cols=rx_panel.cols,
+            vertical_spacing=_spacing_m_to_wavelengths(rx_panel.vertical_spacing_m, frequency_hz),
+            horizontal_spacing=_spacing_m_to_wavelengths(rx_panel.horizontal_spacing_m, frequency_hz),
+            pattern=_sionna_array_pattern(rx_panel.pattern),
+            polarization=rx_panel.polarization,
         )
 
     def _apply_object_positions(self, scene, design, timeframe: TimeframePlan) -> None:
         for obj in design.objects:
-            if obj.object_name in scene.objects:
-                scene.objects[obj.object_name].position = _vector3_for_mitsuba(
+            scene_object_name = _scene_object_name_for_dynamic_object(scene, obj)
+            if scene_object_name is not None:
+                scene.objects[scene_object_name].position = _vector3_for_mitsuba(
                     timeframe.object_positions.get(obj.id, obj.position)
                 )
-                scene.objects[obj.object_name].orientation = _vector3_for_mitsuba(
+                scene.objects[scene_object_name].orientation = _vector3_for_mitsuba(
                     timeframe.object_orientations.get(obj.id, obj.orientation_rad)
                 )
+
+    def _add_external_object_meshes(self, scene, design) -> None:
+        object_meshes = _external_object_mesh_paths(design)
+        if not object_meshes:
+            return
+        from sionna.rt import RadioMaterial, SceneObject, load_mesh
+
+        scene_objects = []
+        for obj, mesh_path in object_meshes:
+            mesh = load_mesh(str(mesh_path))
+            material = RadioMaterial(
+                name=f"{obj.id}-mat",
+                conductivity=0.01,
+                relative_permittivity=5.0,
+            )
+            scene_objects.append(
+                SceneObject(
+                    mi_mesh=mesh,
+                    radio_material=material,
+                    name=obj.id,
+                )
+            )
+        scene.edit(add=scene_objects)
 
 
 @contextmanager
@@ -347,6 +412,87 @@ def _remove_matching_shapes(root, excluded_object_names: set[str]) -> None:
                 parent.remove(child)
 
 
+def _external_object_mesh_paths(design) -> list[tuple[object, Path]]:
+    objects_root = Path(design.scenario_path).parent / "objects"
+    resolved = []
+    for obj in design.objects:
+        if obj.object_name in DYNAMIC_SCENE_OBJECT_NAMES:
+            continue
+        path = _object_mesh_path(objects_root, obj.object_name)
+        if path is not None:
+            resolved.append((obj, path))
+    return resolved
+
+
+def _object_mesh_path(objects_root: Path, object_name: str) -> Path | None:
+    object_name = str(object_name)
+    candidates = []
+    raw_path = Path(object_name)
+    if raw_path.suffix.lower() == ".obj":
+        candidates.append(raw_path if raw_path.is_absolute() else objects_root / raw_path)
+    else:
+        candidates.append(objects_root / f"{object_name}.obj")
+    candidates.append(objects_root / object_name)
+    for candidate in candidates:
+        if candidate.exists() and candidate.suffix.lower() == ".obj":
+            return candidate
+    return None
+
+
+def _scene_object_name_for_dynamic_object(scene, obj) -> str | None:
+    if obj.object_name in scene.objects:
+        return obj.object_name
+    if obj.id in scene.objects:
+        return obj.id
+    return None
+
+
+def _append_cached_radiomap_links(
+    frame_links: list[list[LinkResult]],
+    batch: TimeframeLinkBatch,
+    start_index: int,
+    radiomap_link_cache: dict[tuple, LinkResult],
+) -> bool:
+    keys = [_radiomap_bs_monostatic_cache_key(ref) for ref in batch.refs]
+    if not keys or any(key is None or key not in radiomap_link_cache for key in keys):
+        return False
+    for ref, key in zip(batch.refs, keys, strict=True):
+        frame_links[ref.timeframe_index - start_index].append(
+            _copy_cached_link_result(radiomap_link_cache[key], ref.link)
+        )
+    return True
+
+
+def _radiomap_bs_monostatic_cache_key(ref: TimeframeLinkRef) -> tuple | None:
+    link = ref.link
+    if ref.timeframe.metadata.get("frame_kind") != "radiomap":
+        return None
+    if not link.is_monostatic or not isinstance(link.rx, BaseStation):
+        return None
+    return (
+        link.rx.id,
+        _rounded_vector(position_for(link.rx, ref.timeframe)),
+        _rounded_vector(orientation_for(link.rx, ref.timeframe)),
+        tuple(sorted((key, _rounded_vector(value)) for key, value in ref.timeframe.object_positions.items())),
+        tuple(sorted((key, _rounded_vector(value)) for key, value in ref.timeframe.object_orientations.items())),
+    )
+
+
+def _copy_cached_link_result(cached: LinkResult, link: LinkPlan) -> LinkResult:
+    return LinkResult(
+        rx_index=link.rx_index,
+        tx_index=link.tx_index,
+        rx_id=link.rx.id,
+        tx_id=link.tx.id,
+        h=np.array(cached.h, copy=True),
+        timestamp=cached.timestamp,
+        metadata={
+            key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value
+            for key, value in cached.metadata.items()
+        },
+    )
+
+
 def _paths_to_link_data(
     paths,
     frequency_vector: np.ndarray,
@@ -354,22 +500,23 @@ def _paths_to_link_data(
     link: LinkPlan,
     rx_local_index: int = 0,
     tx_local_index: int = 0,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    if request.channel_mode == ChannelMode.FREQUENCY_DOMAIN:
+        h = _paths_cfr_chunked(paths, np.asarray(paths.tau), frequency_vector)
+        h = _slice_link_array(np.asarray(h), rx_local_index, tx_local_index)
+        h = h * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
+        return (
+            _reshape_h_for_reference(h, link).astype(np.complex64),
+            None,
+            None,
+        )
+
     a, tau = paths.cir(normalize_delays=False, out_type="numpy")
     delays = _slice_link_array(np.asarray(tau), rx_local_index, tx_local_index)
     coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)
     if coeffs.ndim > 0 and coeffs.shape[-1] == 1 and coeffs.ndim == delays.ndim + 1:
         coeffs = np.squeeze(coeffs, axis=-1)
     coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
-    if request.channel_mode == ChannelMode.FREQUENCY_DOMAIN:
-        h = _paths_cfr_chunked(paths, np.asarray(tau), frequency_vector)
-        h = _slice_link_array(np.asarray(h), rx_local_index, tx_local_index)
-        h = h * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
-        return (
-            _reshape_h_for_reference(h, link).astype(np.complex64),
-            _reshape_path_delays_for_reference(delays, link).astype(np.float64),
-            _reshape_path_coefficients_for_reference(coeffs, link).astype(np.complex64),
-        )
     h = render_channel_samples(delays, coeffs, frequency_vector, request.channel_mode)
     return (
         _reshape_h_for_reference(h, link).astype(np.complex64),
@@ -378,7 +525,12 @@ def _paths_to_link_data(
     )
 
 
-def _paths_cfr_chunked(paths, tau: np.ndarray, frequency_vector: np.ndarray, max_entries: int = 250_000_000):
+def _paths_cfr_chunked(
+    paths,
+    tau: np.ndarray,
+    frequency_vector: np.ndarray,
+    max_entries: int = 250_000_000,
+):
     frequencies = np.asarray(frequency_vector, dtype=np.float64).reshape(-1)
     if frequencies.size == 0:
         return np.zeros((*np.asarray(tau).shape[:-1], 0), dtype=np.complex64)
@@ -435,6 +587,12 @@ def _tx_is_only_monostatic_in_batch(
     return bool(matching) and all(ref.link.is_monostatic for ref in matching)
 
 
+def _should_offset_monostatic_tx(refs: tuple[TimeframeLinkRef, ...], timeframe_index: int, tx_device) -> bool:
+    if isinstance(tx_device, BaseStation):
+        return False
+    return _tx_is_only_monostatic_in_batch(refs, timeframe_index, tx_device.id)
+
+
 def _offset_monostatic_tx_position(values, frequency_hz: float) -> tuple[float, float, float]:
     wavelength_m = SPEED_OF_LIGHT_M_PER_S / float(frequency_hz)
     return (float(values[0]) + wavelength_m / 4.0, float(values[1]), float(values[2]))
@@ -448,8 +606,10 @@ def _spacing_m_to_wavelengths(spacing_m: float, frequency_hz: float) -> float:
 
 def _reshape_h_for_reference(h: np.ndarray, link: LinkPlan) -> np.ndarray:
     samples = h.shape[-1]
-    rx_ant = link.rx.panel.element_count
-    tx_ant = link.tx.panel.element_count
+    rx_panel = link.rx_panel
+    tx_panel = link.tx_panel
+    rx_ant = rx_panel.element_count
+    tx_ant = tx_panel.element_count
 
     if h.ndim == 5 and h.shape[0] == 1 and h.shape[2] == 1:
         h = h[0, :, 0, :, :]
@@ -462,10 +622,10 @@ def _reshape_h_for_reference(h: np.ndarray, link: LinkPlan) -> np.ndarray:
         h = h.reshape(rx_ant, tx_ant, samples)
 
     return h.reshape(
-        link.rx.panel.rows,
-        link.rx.panel.cols,
-        link.tx.panel.rows,
-        link.tx.panel.cols,
+        rx_panel.rows,
+        rx_panel.cols,
+        tx_panel.rows,
+        tx_panel.cols,
         1,
         samples,
     )
@@ -473,8 +633,10 @@ def _reshape_h_for_reference(h: np.ndarray, link: LinkPlan) -> np.ndarray:
 
 def _reshape_path_delays_for_reference(delays: np.ndarray, link: LinkPlan) -> np.ndarray:
     path_count = delays.shape[-1]
-    rx_ant = link.rx.panel.element_count
-    tx_ant = link.tx.panel.element_count
+    rx_panel = link.rx_panel
+    tx_panel = link.tx_panel
+    rx_ant = rx_panel.element_count
+    tx_ant = tx_panel.element_count
 
     if delays.ndim == 4 and delays.shape[0] == 1 and delays.shape[2] == 1:
         delays = delays[0, :, 0, :]
@@ -487,10 +649,10 @@ def _reshape_path_delays_for_reference(delays: np.ndarray, link: LinkPlan) -> np
         delays = delays.reshape(rx_ant, tx_ant, path_count)
 
     return delays.reshape(
-        link.rx.panel.rows,
-        link.rx.panel.cols,
-        link.tx.panel.rows,
-        link.tx.panel.cols,
+        rx_panel.rows,
+        rx_panel.cols,
+        tx_panel.rows,
+        tx_panel.cols,
         1,
         path_count,
     )
@@ -498,8 +660,10 @@ def _reshape_path_delays_for_reference(delays: np.ndarray, link: LinkPlan) -> np
 
 def _reshape_path_coefficients_for_reference(coeffs: np.ndarray, link: LinkPlan) -> np.ndarray:
     path_count = coeffs.shape[-1]
-    rx_ant = link.rx.panel.element_count
-    tx_ant = link.tx.panel.element_count
+    rx_panel = link.rx_panel
+    tx_panel = link.tx_panel
+    rx_ant = rx_panel.element_count
+    tx_ant = tx_panel.element_count
 
     if coeffs.ndim == 4 and coeffs.shape[0] == 1 and coeffs.shape[2] == 1:
         coeffs = coeffs[0, :, 0, :]
@@ -512,10 +676,10 @@ def _reshape_path_coefficients_for_reference(coeffs: np.ndarray, link: LinkPlan)
         coeffs = coeffs.reshape(rx_ant, tx_ant, path_count)
 
     return coeffs.reshape(
-        link.rx.panel.rows,
-        link.rx.panel.cols,
-        link.tx.panel.rows,
-        link.tx.panel.cols,
+        rx_panel.rows,
+        rx_panel.cols,
+        tx_panel.rows,
+        tx_panel.cols,
         1,
         path_count,
     )
@@ -525,8 +689,8 @@ def _build_link_batches(links: tuple[LinkPlan, ...], request_los: bool) -> list[
     grouped: dict[tuple, list[LinkPlan]] = {}
     for link in links:
         key = (
-            _panel_key(link.rx),
-            _panel_key(link.tx),
+            _link_panel_key(link, "rx"),
+            _link_panel_key(link, "tx"),
             bool(request_los and not link.is_monostatic),
         )
         grouped.setdefault(key, []).append(link)
@@ -549,7 +713,7 @@ def _build_link_batches(links: tuple[LinkPlan, ...], request_los: bool) -> list[
 def _format_sionna_batch_progress(batch: TimeframeLinkBatch, batch_index: int, batch_count: int) -> str:
     links = ", ".join(
         f"{ref.link.rx.id}<-{ref.link.tx.id}"
-        f" ({ref.link.rx.panel.element_count}x{ref.link.tx.panel.element_count})"
+        f" ({ref.link.rx_panel.element_count}x{ref.link.tx_panel.element_count})"
         for ref in batch.refs[:4]
     )
     if len(batch.refs) > 4:
@@ -599,9 +763,10 @@ def _build_timeframe_link_batches(
     for offset, timeframe in enumerate(timeframes):
         timeframe_index = start_index + offset
         for link in timeframe.links:
+            solver_link = _solver_link(link)
             key = (
-                _panel_key(link.rx),
-                _panel_key(link.tx),
+                _link_panel_key(solver_link, "rx", timeframe),
+                _link_panel_key(solver_link, "tx", timeframe),
                 bool(request_los and not link.is_monostatic),
             )
             grouped.setdefault(key, []).append(
@@ -613,10 +778,10 @@ def _build_timeframe_link_batches(
         for split_refs in _split_horn_refs(tuple(refs)):
             for split_refs in _split_pose_colliding_refs(tuple(split_refs)):
                 rx_devices = _unique_timeframe_devices(
-                    (ref.timeframe_index, ref.timeframe, ref.link.rx) for ref in split_refs
+                    (ref.timeframe_index, ref.timeframe, _solver_rx_device(ref.link)) for ref in split_refs
                 )
                 tx_devices = _unique_timeframe_devices(
-                    (ref.timeframe_index, ref.timeframe, ref.link.tx) for ref in split_refs
+                    (ref.timeframe_index, ref.timeframe, _solver_tx_device(ref.link)) for ref in split_refs
                 )
                 batches.append(
                     TimeframeLinkBatch(
@@ -630,20 +795,75 @@ def _build_timeframe_link_batches(
 
 
 def _split_horn_refs(refs: tuple[TimeframeLinkRef, ...]) -> list[list[TimeframeLinkRef]]:
-    split: list[list[TimeframeLinkRef]] = []
+    split: dict[tuple[int, str, str], list[TimeframeLinkRef]] = {}
     regular: list[TimeframeLinkRef] = []
     for ref in refs:
         if _link_uses_journal_horn(ref.link):
-            split.append([ref])
+            split.setdefault(_canonical_solver_ref_key(ref), []).append(ref)
         else:
             regular.append(ref)
+    groups = list(split.values())
     if regular:
-        split.append(regular)
-    return split
+        groups.append(regular)
+    return groups
 
 
 def _link_uses_journal_horn(link: LinkPlan) -> bool:
-    return link.rx.panel.pattern == JOURNAL_HORN_PATTERN or link.tx.panel.pattern == JOURNAL_HORN_PATTERN
+    return link.rx_panel.pattern == JOURNAL_HORN_PATTERN or link.tx_panel.pattern == JOURNAL_HORN_PATTERN
+
+
+def _canonical_solver_ref_key(ref: TimeframeLinkRef) -> tuple[int, str, str]:
+    return (
+        ref.timeframe_index,
+        _solver_rx_device(ref.link).id,
+        _solver_tx_device(ref.link).id,
+    )
+
+
+def _solver_rx_device(link: LinkPlan):
+    if isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment):
+        return link.tx
+    return link.rx
+
+
+def _solver_tx_device(link: LinkPlan):
+    if isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment):
+        return link.rx
+    return link.tx
+
+
+def _solver_link(link: LinkPlan) -> LinkPlan:
+    if _link_uses_reverse_solver_direction(link):
+        return LinkPlan(
+            rx_index=link.tx_index,
+            tx_index=link.rx_index,
+            rx=link.tx,
+            tx=link.rx,
+        )
+    return link
+
+
+def _link_uses_reverse_solver_direction(link: LinkPlan) -> bool:
+    return isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment)
+
+
+def _transpose_reciprocal_link_data(
+    h: np.ndarray,
+    path_delays: np.ndarray | None,
+    path_coefficients: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    return (
+        _transpose_rx_tx_axes(h),
+        None if path_delays is None else _transpose_rx_tx_axes(path_delays),
+        None if path_coefficients is None else _transpose_rx_tx_axes(path_coefficients),
+    )
+
+
+def _transpose_rx_tx_axes(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values)
+    if values.ndim != 6:
+        raise ValueError(f"Expected reference channel tensor with 6 dimensions, got {values.shape}")
+    return np.transpose(values, (2, 3, 0, 1, 4, 5)).copy()
 
 
 def _split_pose_colliding_refs(
@@ -658,20 +878,22 @@ def _split_pose_colliding_refs(
     groups: list[list[TimeframeLinkRef]] = []
     group_keys: list[tuple[dict[tuple, str], dict[tuple, str]]] = []
     for ref in refs:
-        rx_key = _role_pose_key(ref.timeframe, ref.link.rx)
-        tx_key = _role_pose_key(ref.timeframe, ref.link.tx)
+        solver_rx = _solver_rx_device(ref.link)
+        solver_tx = _solver_tx_device(ref.link)
+        rx_key = _role_pose_key(ref.timeframe, solver_rx)
+        tx_key = _role_pose_key(ref.timeframe, solver_tx)
         for idx, (rx_keys, tx_keys) in enumerate(group_keys):
             if (
-                rx_keys.get(rx_key, ref.link.rx.id) == ref.link.rx.id
-                and tx_keys.get(tx_key, ref.link.tx.id) == ref.link.tx.id
+                rx_keys.get(rx_key, solver_rx.id) == solver_rx.id
+                and tx_keys.get(tx_key, solver_tx.id) == solver_tx.id
             ):
                 groups[idx].append(ref)
-                rx_keys[rx_key] = ref.link.rx.id
-                tx_keys[tx_key] = ref.link.tx.id
+                rx_keys[rx_key] = solver_rx.id
+                tx_keys[tx_key] = solver_tx.id
                 break
         else:
             groups.append([ref])
-            group_keys.append(({rx_key: ref.link.rx.id}, {tx_key: ref.link.tx.id}))
+            group_keys.append(({rx_key: solver_rx.id}, {tx_key: solver_tx.id}))
     return groups
 
 
@@ -682,8 +904,26 @@ def _role_pose_key(timeframe: TimeframePlan, device) -> tuple:
     )
 
 
-def _panel_key(device) -> tuple:
+def _panel_key(device, timeframe: TimeframePlan | None = None) -> tuple:
     panel = device.panel
+    orientation = orientation_for(device, timeframe) if timeframe is not None else device.orientation_rad
+    return _panel_spec_key(panel, orientation)
+
+
+def _link_panel_key(link: LinkPlan, side: str, timeframe: TimeframePlan | None = None) -> tuple:
+    if side == "rx":
+        panel = link.rx_panel
+        device = link.rx
+    elif side == "tx":
+        panel = link.tx_panel
+        device = link.tx
+    else:
+        raise ValueError(f"Unsupported link panel side: {side}")
+    orientation = orientation_for(device, timeframe) if timeframe is not None else device.orientation_rad
+    return _panel_spec_key(panel, orientation)
+
+
+def _panel_spec_key(panel, orientation) -> tuple:
     return (
         panel.rows,
         panel.cols,
@@ -691,7 +931,7 @@ def _panel_key(device) -> tuple:
         panel.polarization,
         panel.vertical_spacing_m,
         panel.horizontal_spacing_m,
-        _rounded_vector(device.orientation_rad),
+        _rounded_vector(orientation),
     )
 
 
@@ -723,7 +963,7 @@ def _local_device_index(
     }
     local: dict[tuple[int, str], int] = {}
     for ref in refs:
-        device = ref.link.rx if side == "rx" else ref.link.tx
+        device = _solver_rx_device(ref.link) if side == "rx" else _solver_tx_device(ref.link)
         local[(ref.timeframe_index, device.id)] = state_to_index[
             _timeframe_device_state_key(ref.timeframe, device)
         ]

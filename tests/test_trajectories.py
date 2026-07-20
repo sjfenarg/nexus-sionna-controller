@@ -3,6 +3,7 @@ import pytest
 
 from isac_6d_sampler.core.model import RadiomapConfig, TrajectorySpec
 from isac_6d_sampler.core.trajectories import (
+    default_bezier_handles,
     radiomap_grid_shape,
     sample_orientations,
     sample_radiomap_grid,
@@ -34,6 +35,52 @@ def test_linear_orientation_control_points_are_sampled():
     assert orientations.shape == (3, 3)
     np.testing.assert_allclose(orientations[0], [0.0, 0.0, 0.0])
     np.testing.assert_allclose(orientations[-1], [1.0, 0.5, 0.25])
+
+
+def test_curve_trajectory_samples_cubic_bezier_in_xy_plane():
+    spec = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (10.0, 0.0, 3.0)],
+        bezier_handles=[
+            ((0.0, 0.0, 1.5), (0.0, 10.0, 1.5)),
+            ((10.0, 10.0, 1.5), (10.0, 0.0, 1.5)),
+        ],
+        samples=5,
+    )
+
+    trajectory = sample_trajectory(spec)
+
+    assert trajectory.shape == (5, 3)
+    np.testing.assert_allclose(trajectory[0], [0.0, 0.0, 1.5])
+    np.testing.assert_allclose(trajectory[-1], [10.0, 0.0, 1.5])
+    assert np.max(trajectory[:, 1]) > 4.0
+    np.testing.assert_allclose(trajectory[:, 2], 1.5)
+
+
+def test_curve_orientation_follows_xy_tangent_yaw():
+    spec = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (0.0, 10.0, 1.5)],
+        bezier_handles=[
+            ((0.0, 0.0, 1.5), (0.0, 4.0, 1.5)),
+            ((0.0, 6.0, 1.5), (0.0, 10.0, 1.5)),
+        ],
+        orientation_rad_points=[(0.0, 0.0, 9.0), (0.0, 0.0, 9.0)],
+        samples=5,
+    )
+
+    orientations = sample_orientations(spec, (0.0, 0.0, 0.0))
+
+    np.testing.assert_allclose(orientations[:, 0], np.pi / 2.0)
+    np.testing.assert_allclose(orientations[:, 1:], 0.0)
+
+
+def test_default_bezier_handles_create_one_pair_per_anchor():
+    handles = default_bezier_handles([(0.0, 0.0, 2.0), (6.0, 0.0, 2.0), (6.0, 6.0, 2.0)])
+
+    assert len(handles) == 3
+    assert handles[0][0] == (0.0, 0.0, 2.0)
+    assert handles[-1][1] == (6.0, 6.0, 2.0)
 
 
 def test_radiomap_grid_parallel_to_xy():

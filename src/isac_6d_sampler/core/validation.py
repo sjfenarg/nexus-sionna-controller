@@ -17,7 +17,7 @@ from .scenarios import load_scenario_asset
 from .trajectories import sample_trajectory
 
 _POLARIZATIONS = {"V", "H", "VH", "cross"}
-_TRAJECTORY_KINDS = {"static", "linear", "polyline"}
+_TRAJECTORY_KINDS = {"static", "linear", "polyline", "curve"}
 _TRAJECTORY_EASINGS = {"linear", "smoothstep"}
 _DELAY_BIN_CHANNEL_MODES = {
     ChannelMode.COHERENT_PER_BIN,
@@ -157,6 +157,11 @@ def _validate_trajectory(prefix: str, trajectory: TrajectorySpec, errors: list[s
         errors.append(f"{prefix}.points must contain at least two points for linear trajectories")
     if trajectory.kind == "polyline" and len(trajectory.points) < 2:
         errors.append(f"{prefix}.points must contain at least two points for polyline trajectories")
+    if trajectory.kind == "curve":
+        if len(trajectory.points) < 2:
+            errors.append(f"{prefix}.points must contain at least two points for curve trajectories")
+        if trajectory.bezier_handles and len(trajectory.bezier_handles) != len(trajectory.points):
+            errors.append(f"{prefix}.bezier_handles must contain one in/out pair per trajectory point")
     try:
         sample_trajectory(trajectory)
     except ValueError as exc:
@@ -168,7 +173,7 @@ def _validate_object_targets(request: SimulationRequest, errors: list[str]) -> N
     if not request.scene.objects or not scenario_path.exists():
         return
     asset = load_scenario_asset(scenario_path)
-    available = set(asset.object_names)
+    available = set(asset.object_names) | {mesh.name for mesh in asset.object_meshes}
     if not available:
         return
     for idx, obj in enumerate(request.scene.objects):

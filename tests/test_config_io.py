@@ -7,7 +7,17 @@ import pytest
 from isac_6d_sampler.cli import main
 from isac_6d_sampler.core.antenna_patterns import ISAC_HORN_PATTERN
 from isac_6d_sampler.core.config_io import read_request, template_request, write_request
-from isac_6d_sampler.core.model import ChannelMode, FrequencyBand, RadiomapConfig, SimulationRequest
+from isac_6d_sampler.core.model import (
+    AntennaPanel,
+    BaseStation,
+    ChannelMode,
+    DynamicObject,
+    FrequencyBand,
+    RadiomapConfig,
+    SimulationRequest,
+    TrajectorySpec,
+    UserEquipment,
+)
 from isac_6d_sampler.io.reference_h5 import ReferenceH5Writer
 from isac_6d_sampler.sim.dry_run import DryRunSimulator
 
@@ -71,6 +81,160 @@ def test_radiomap_config_round_trip_preserves_bounds_and_spacing(tmp_path):
     assert loaded.scene.radiomap.x_spacing == 0.5
     assert loaded.scene.radiomap.y_spacing == 0.75
     assert loaded.scene.radiomap.height == 1.25
+
+
+def test_curve_trajectory_round_trip_preserves_bezier_handles(tmp_path):
+    request = SimulationRequest(dry_run=True, output_dir=tmp_path)
+    request.scene.ensure_defaults()
+    request.scene.user_equipments[0].trajectory = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (10.0, 0.0, 1.5)],
+        bezier_handles=[
+            ((0.0, 0.0, 1.5), (0.0, 5.0, 1.5)),
+            ((10.0, 5.0, 1.5), (10.0, 0.0, 1.5)),
+        ],
+        samples=12,
+    )
+    path = tmp_path / "curve_request.json"
+
+    write_request(path, request)
+    loaded = read_request(path)
+
+    trajectory = loaded.scene.user_equipments[0].trajectory
+    assert trajectory.kind == "curve"
+    assert trajectory.bezier_handles[0][1] == (0.0, 5.0, 1.5)
+
+
+def test_rich_scene_request_round_trip_preserves_gui_design_state(tmp_path):
+    request = SimulationRequest(dry_run=False, output_dir=tmp_path / "out", sample_id="rich")
+    request.scene.name = "rich_scene"
+    request.scene.scenario_path = tmp_path / "rich_scene.xml"
+    request.scene.description = "multi entity GUI design"
+    request.channel_mode = ChannelMode.FREQUENCY_DOMAIN
+    request.bands = [
+        FrequencyBand(name="low", start_hz=77e9, stop_hz=78e9, points=64),
+        FrequencyBand(name="high", start_hz=80e9, stop_hz=81e9, points=128),
+    ]
+    request.sionna.tx_power_dbm = 44.0
+    request.sionna.samples_per_src = 500_000
+    request.sionna.max_depth = 3
+    request.sionna.max_num_paths_per_src = None
+    request.sionna.seed = 42
+    request.sionna.synthetic_array = False
+
+    bs0 = BaseStation(
+        id="bs0",
+        position=(52.353, -19.516, 19.203),
+        orientation_rad=(0.1, 0.2, 0.3),
+        panel=AntennaPanel(
+            rows=10,
+            cols=10,
+            pattern=ISAC_HORN_PATTERN,
+            element_diagram=ISAC_HORN_PATTERN,
+            polarization="V",
+            vertical_spacing_m=0.0019,
+            horizontal_spacing_m=0.0019,
+            orientation_rad=(0.1, 0.2, 0.3),
+        ),
+    )
+    bs1 = BaseStation(
+        id="bs1",
+        position=(0.0, 20.0, 12.0),
+        orientation_rad=(-0.2, 0.1, 0.0),
+        panel=AntennaPanel(rows=4, cols=8, pattern="iso", element_diagram="iso", polarization="VH"),
+    )
+
+    ue0 = UserEquipment(
+        id="ue0",
+        position=(0.0, 0.0, 1.5),
+        orientation_rad=(0.0, 0.0, 0.0),
+        panel=AntennaPanel(rows=1, cols=1, pattern=ISAC_HORN_PATTERN, element_diagram=ISAC_HORN_PATTERN),
+        trajectory=TrajectorySpec(
+            kind="linear",
+            points=[(0.0, 0.0, 1.5), (10.0, 0.0, 1.5)],
+            orientation_rad_points=[(0.0, 0.0, 0.0), (0.0, 0.1, 0.0)],
+            samples=25,
+        ),
+    )
+    ue1 = UserEquipment(
+        id="ue1",
+        position=(1.0, 1.0, 1.5),
+        orientation_rad=(0.0, 0.0, 0.4),
+        panel=AntennaPanel(rows=2, cols=2, pattern="dipole", element_diagram="dipole", polarization="H"),
+        trajectory=TrajectorySpec(
+            kind="curve",
+            points=[(1.0, 1.0, 1.5), (5.0, 4.0, 1.5), (9.0, 1.0, 1.5)],
+            bezier_handles=[
+                ((1.0, 1.0, 1.5), (2.0, 3.0, 1.5)),
+                ((4.0, 5.0, 1.5), (6.0, 5.0, 1.5)),
+                ((8.0, 3.0, 1.5), (9.0, 1.0, 1.5)),
+            ],
+            samples=25,
+        ),
+    )
+
+    car = DynamicObject(
+        id="car0",
+        object_name="CAR_obj",
+        position=(0.0, 0.0, 0.75),
+        orientation_rad=(0.0, 0.0, 0.2),
+        trajectory=TrajectorySpec(
+            kind="polyline",
+            points=[(0.0, 0.0, 0.75), (3.0, 1.0, 0.75), (6.0, 1.0, 0.75)],
+            orientation_rad_points=[(0.0, 0.0, 0.2), (0.0, 0.0, 0.4), (0.0, 0.0, 0.6)],
+            samples=25,
+        ),
+    )
+    drone = DynamicObject(
+        id="drone0",
+        object_name="DRONE_obj",
+        position=(-2.0, 1.0, 1.2),
+        trajectory=TrajectorySpec.linear((-2.0, 1.0, 1.2), (-2.0, 4.0, 1.2), 25),
+    )
+
+    request.scene.base_stations = [bs0, bs1]
+    request.scene.user_equipments = [ue0, ue1]
+    request.scene.objects = [car, drone]
+    request.scene.radiomap = RadiomapConfig(
+        enabled=True,
+        x_min=-5.0,
+        x_max=5.0,
+        y_min=-4.0,
+        y_max=6.0,
+        x_spacing=1.0,
+        y_spacing=1.0,
+        height=1.5,
+        ue_template=UserEquipment(
+            id="rm_ue",
+            panel=AntennaPanel(rows=1, cols=1, pattern=ISAC_HORN_PATTERN, element_diagram=ISAC_HORN_PATTERN),
+        ),
+    )
+    path = tmp_path / "rich_request.json"
+
+    write_request(path, request)
+    loaded = read_request(path)
+
+    assert loaded.scene.name == "rich_scene"
+    assert loaded.scene.scenario_path == tmp_path / "rich_scene.xml"
+    assert [bs.id for bs in loaded.scene.base_stations] == ["bs0", "bs1"]
+    assert [ue.id for ue in loaded.scene.user_equipments] == ["ue0", "ue1"]
+    assert [obj.id for obj in loaded.scene.objects] == ["car0", "drone0"]
+    assert loaded.scene.base_stations[0].position == (52.353, -19.516, 19.203)
+    assert loaded.scene.base_stations[0].panel.pattern == ISAC_HORN_PATTERN
+    assert loaded.scene.base_stations[0].panel.rows == 10
+    assert loaded.scene.base_stations[1].panel.polarization == "VH"
+    assert loaded.scene.user_equipments[0].trajectory.kind == "linear"
+    assert loaded.scene.user_equipments[0].trajectory.orientation_rad_points[1] == (0.0, 0.1, 0.0)
+    assert loaded.scene.user_equipments[1].trajectory.kind == "curve"
+    assert loaded.scene.user_equipments[1].trajectory.bezier_handles[1][0] == (4.0, 5.0, 1.5)
+    assert loaded.scene.objects[0].object_name == "CAR_obj"
+    assert loaded.scene.objects[0].trajectory.points[2] == (6.0, 1.0, 0.75)
+    assert loaded.scene.objects[1].object_name == "DRONE_obj"
+    assert loaded.scene.radiomap.enabled
+    assert loaded.scene.radiomap.ue_template.panel.pattern == ISAC_HORN_PATTERN
+    assert loaded.sionna.tx_power_dbm == 44.0
+    assert loaded.sionna.max_num_paths_per_src is None
+    assert loaded.bands[1].points == 128
 
 
 def test_multi_band_reference_export(tmp_path):
@@ -379,9 +543,11 @@ def test_cli_bs_ue_overrides_generate_multi_bs_scene(tmp_path):
         assert sample["parameters/antenna_params/ue0"].attrs["vertical_spacing"] == 0.1
         assert sample["parameters/antenna_params/ue0"].attrs["horizontal_spacing"] == 0.2
         assert len(sample["timeframes"]) == 3
-        assert sample["timeframes/tf002/parameters"].attrs["n_channels"] == 5
+        assert sample["timeframes/tf002/parameters"].attrs["n_channels"] == 7
         links = set(sample["timeframes/tf002/h"].keys())
-        assert {"rx0_tx0", "rx0_tx1", "rx1_tx0", "rx0_tx2", "rx2_tx0"} == links
+        assert {"rx0_tx0", "rx0_tx1", "rx1_tx0", "rx0_tx2", "rx2_tx0", "rx1_tx1", "rx2_tx2"} == links
+        assert sample["timeframes/tf002/h/rx1_tx1"].shape[:-1] == (2, 3, 1, 1, 1)
+        assert sample["timeframes/tf002/h/rx2_tx2"].shape[:-1] == (1, 2, 1, 1, 1)
         np.testing.assert_allclose(
             sample["timeframes/tf002/positions/devices/ue0"][:],
             [2.0, 0.0, 1.5],

@@ -240,6 +240,8 @@ class ReferenceH5Writer:
         group.attrs["end_static_fraction"] = float(trajectory.end_static_fraction)
         group.attrs["easing"] = trajectory.easing
         _replace_dataset(group, "control_points", np.asarray(trajectory.points, dtype=np.float64))
+        if trajectory.bezier_handles:
+            _replace_dataset(group, "bezier_handles", np.asarray(trajectory.bezier_handles, dtype=np.float64))
         if trajectory.orientation_rad_points:
             _replace_dataset(
                 group,
@@ -302,11 +304,12 @@ class ReferenceH5Writer:
         timeframes_group = sample_group.require_group("timeframes")
         string_dtype = h5py.string_dtype(encoding="utf-8")
         channel_sample_axis = _sample_axis_for_channel_mode(result.metadata.get("channel_mode"))
+        write_path_metadata = result.metadata.get("channel_mode") != ChannelMode.FREQUENCY_DOMAIN.value
         for timeframe in result.timeframes:
             tf_group = timeframes_group.require_group(timeframe.name)
             h_group = tf_group.require_group("h")
-            tau_group = tf_group.require_group("tau")
-            a_group = tf_group.require_group("a")
+            tau_group = tf_group.require_group("tau") if write_path_metadata else None
+            a_group = tf_group.require_group("a") if write_path_metadata else None
             timestamp_group = tf_group.require_group("timestamps")
             self._write_timeframe_attrs(tf_group, timeframe.metadata)
             tf_group.require_group("parameters").attrs["n_channels"] = len(timeframe.links)
@@ -322,7 +325,7 @@ class ReferenceH5Writer:
                     compression_opts=4,
                 )
                 _write_link_dataset_attrs(h_dataset, link, "channel", sample_axis=channel_sample_axis)
-                if "path_delays_s" in link.metadata:
+                if write_path_metadata and "path_delays_s" in link.metadata:
                     tau_dataset = _replace_dataset(
                         tau_group,
                         name,
@@ -332,7 +335,7 @@ class ReferenceH5Writer:
                     )
                     _write_link_dataset_attrs(tau_dataset, link, "path_delay", sample_axis="path_index")
                     tau_dataset.attrs["value_units"] = "seconds"
-                if "path_coefficients" in link.metadata:
+                if write_path_metadata and "path_coefficients" in link.metadata:
                     a_dataset = _replace_dataset(
                         a_group,
                         name,

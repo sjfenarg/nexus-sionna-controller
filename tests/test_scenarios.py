@@ -2,15 +2,24 @@ import struct
 
 import numpy as np
 
-from isac_6d_sampler.core.scenarios import discover_scenarios, load_scenario_asset, read_ply_bounds
+from isac_6d_sampler.core.scenarios import (
+    discover_object_meshes,
+    discover_scenarios,
+    load_scenario_asset,
+    read_obj_bounds,
+    read_ply_bounds,
+)
 
 
 def test_discover_scenarios_extracts_named_ply_shapes(tmp_path):
     scenarios = tmp_path / "scenarios"
     mesh_dir = scenarios / "meshes"
+    object_dir = scenarios / "objects"
     mesh_dir.mkdir(parents=True)
+    object_dir.mkdir()
     _write_ascii_ply(mesh_dir / "CAR_obj.ply", [(0.0, 0.0, 0.0), (2.0, 1.0, 0.5)])
     _write_ascii_ply(mesh_dir / "WALL_obj.ply", [(-1.0, -3.0, 0.0), (0.0, 4.0, 2.0)])
+    _write_obj(object_dir / "DRONE_obj.obj", [(-2.0, -1.0, 0.0), (-1.0, 1.0, 1.0)])
     (scenarios / "scene.xml").write_text(
         """
         <scene>
@@ -32,6 +41,8 @@ def test_discover_scenarios_extracts_named_ply_shapes(tmp_path):
     assert assets[0].name == "scene"
     assert assets[0].mesh_count == 2
     assert assets[0].object_names == ("CAR_obj", "WALL_obj")
+    assert [mesh.name for mesh in assets[0].object_meshes] == ["DRONE_obj"]
+    assert assets[0].object_meshes[0].bounds.xy_min == (-2.0, -1.0)
     assert assets[0].meshes[0].path == mesh_dir / "CAR_obj.ply"
     assert assets[0].meshes[0].bounds.xy_min == (0.0, 0.0)
     assert assets[0].meshes[0].bounds.xy_max == (2.0, 1.0)
@@ -40,6 +51,7 @@ def test_discover_scenarios_extracts_named_ply_shapes(tmp_path):
 
     direct = load_scenario_asset(scenarios / "scene.xml")
     assert direct.object_names == ("CAR_obj", "WALL_obj")
+    assert [mesh.name for mesh in direct.object_meshes] == ["DRONE_obj"]
 
 
 def test_read_ply_bounds_supports_binary_little_endian(tmp_path):
@@ -67,6 +79,20 @@ def test_read_ply_bounds_supports_binary_little_endian(tmp_path):
     np.testing.assert_allclose(bounds.max_xyz, [3.0, 4.0, 2.5])
 
 
+def test_read_obj_bounds_and_object_discovery(tmp_path):
+    object_dir = tmp_path / "objects"
+    object_dir.mkdir()
+    obj_path = object_dir / "DRONE_obj.obj"
+    _write_obj(obj_path, [(-1.0, -2.0, 0.0), (3.0, 4.0, 5.0)])
+
+    bounds = read_obj_bounds(obj_path)
+    meshes = discover_object_meshes(object_dir)
+
+    np.testing.assert_allclose(bounds.min_xyz, [-1.0, -2.0, 0.0])
+    np.testing.assert_allclose(bounds.max_xyz, [3.0, 4.0, 5.0])
+    assert [mesh.name for mesh in meshes] == ["DRONE_obj"]
+
+
 def _write_ascii_ply(path, vertices):
     lines = [
         "ply",
@@ -81,3 +107,11 @@ def _write_ascii_ply(path, vertices):
     ]
     lines.extend(f"{x} {y} {z}" for x, y, z in vertices)
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
+
+
+def _write_obj(path, vertices):
+    lines = ["# test obj"]
+    lines.extend(f"v {x} {y} {z}" for x, y, z in vertices)
+    if len(vertices) >= 3:
+        lines.append("f 1 2 3")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

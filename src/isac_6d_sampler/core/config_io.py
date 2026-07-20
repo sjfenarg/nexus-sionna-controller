@@ -103,6 +103,10 @@ def _trajectory(data: dict[str, Any]) -> TrajectorySpec:
     return TrajectorySpec(
         kind=str(data.get("kind", "static")),
         points=[_vector3(point) for point in data.get("points", [(0.0, 0.0, 0.0)])],
+        bezier_handles=[
+            (_vector3(pair[0]), _vector3(pair[1]))
+            for pair in data.get("bezier_handles", [])
+        ],
         orientation_rad_points=[
             _vector3(point)
             for point in data.get("orientation_rad_points", data.get("orientations", []))

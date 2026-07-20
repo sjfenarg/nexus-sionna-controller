@@ -380,16 +380,8 @@ def _delay_values(
     freqs_hz: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, str]:
     if mode == ChannelMode.FREQUENCY_DOMAIN:
-        if "path_delays_s" in link.metadata and "path_coefficients" in link.metadata:
-            values, x_s = _physical_path_pdp(
-                np.asarray(link.metadata["path_delays_s"], dtype=np.float64),
-                np.asarray(link.metadata["path_coefficients"], dtype=np.complex64),
-                freqs_hz,
-                h.shape[-1],
-            )
-            return values, x_s, "physical CIR path PDP from stored tau/a"
-        values = np.fft.ifft(h, axis=-1)
-        return values, _delay_axis(freqs_hz, h.shape[-1]), "circular IFFT of stored H(f)"
+        values, x_s = _cfr_to_causal_delay_response(h, freqs_hz)
+        return values, x_s, "non-circular direct IDFT of stored H(f)"
     if mode == ChannelMode.CIR_PATHS:
         tau = np.asarray(link.metadata.get("path_delays_s", np.zeros_like(h.real)), dtype=np.float64)
         values, x_s = _physical_path_pdp(tau, h, freqs_hz, h.shape[-1])
@@ -425,6 +417,34 @@ def _delay_axis(freqs_hz: np.ndarray, sample_count: int) -> np.ndarray:
     if sample_count <= 0:
         return np.zeros(0, dtype=np.float64)
     return np.arange(sample_count, dtype=np.float64) * _delay_bin_width(freqs_hz, sample_count)
+
+
+def _cfr_to_causal_delay_response(
+    h: np.ndarray,
+    freqs_hz: np.ndarray,
+    *,
+    delay_count: int | None = None,
+    chunk_size: int = 256,
+) -> tuple[np.ndarray, np.ndarray]:
+    h = np.asarray(h, dtype=np.complex128)
+    freqs = np.asarray(freqs_hz, dtype=np.float64).reshape(-1)
+    if h.size == 0 or freqs.size == 0:
+        return np.zeros(0, dtype=np.complex64), np.zeros(0, dtype=np.float64)
+    sample_count = min(h.shape[-1], freqs.size)
+    h = h[..., :sample_count]
+    freqs = freqs[:sample_count]
+    delay_count = sample_count if delay_count is None else max(0, int(delay_count))
+    delays_s = _delay_axis(freqs, delay_count)
+    if delay_count == 0:
+        return np.zeros((*h.shape[:-1], 0), dtype=np.complex64), delays_s
+
+    flat_h = h.reshape(-1, sample_count)
+    flat_out = np.empty((flat_h.shape[0], delay_count), dtype=np.complex128)
+    for start in range(0, delay_count, max(1, int(chunk_size))):
+        stop = min(start + max(1, int(chunk_size)), delay_count)
+        phase = np.exp(2j * np.pi * delays_s[start:stop, None] * freqs[None, :])
+        flat_out[:, start:stop] = flat_h @ phase.T / float(sample_count)
+    return flat_out.reshape(*h.shape[:-1], delay_count).astype(np.complex64), delays_s
 
 
 def _mean_sample_axis(values: np.ndarray) -> np.ndarray:

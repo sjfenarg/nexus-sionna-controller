@@ -299,3 +299,29 @@ def test_validate_request_accepts_dynamic_object_name_from_existing_scenario(tmp
     request.scene.objects = [DynamicObject(id="car0", object_name="CAR_obj")]
 
     validate_request(request)
+
+
+def test_validate_request_accepts_dynamic_object_name_from_objects_folder(tmp_path):
+    scenario = tmp_path / "scene.xml"
+    object_dir = tmp_path / "objects"
+    object_dir.mkdir()
+    (object_dir / "DRONE_obj.obj").write_text(
+        "\n".join(
+            [
+                "v 0 0 0",
+                "v 1 0 0",
+                "v 0 1 0",
+                "f 1 2 3",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    scenario.write_text("<scene />\n", encoding="utf-8")
+    request = SimulationRequest()
+    request.scene.scenario_path = scenario
+    request.scene.base_stations = [BaseStation(id="bs0")]
+    request.scene.user_equipments = [UserEquipment(id="ue0")]
+    request.scene.objects = [DynamicObject(id="drone0", object_name="DRONE_obj")]
+
+    validate_request(request)

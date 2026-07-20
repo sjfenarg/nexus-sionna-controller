@@ -45,6 +45,7 @@ class ScenarioAsset:
     name: str
     path: Path
     meshes: tuple[MeshAsset, ...]
+    object_meshes: tuple[MeshAsset, ...] = ()
 
     @property
     def mesh_count(self) -> int:
@@ -74,6 +75,7 @@ def discover_scenarios(root: Path) -> list[ScenarioAsset]:
                 name=xml_path.stem,
                 path=xml_path,
                 meshes=_parse_mesh_assets(xml_path),
+                object_meshes=discover_object_meshes(root / "objects"),
             )
         )
     return assets
@@ -85,6 +87,17 @@ def load_scenario_asset(xml_path: Path) -> ScenarioAsset:
         name=xml_path.stem,
         path=xml_path,
         meshes=_parse_mesh_assets(xml_path),
+        object_meshes=discover_object_meshes(xml_path.parent / "objects"),
+    )
+
+
+def discover_object_meshes(root: Path) -> tuple[MeshAsset, ...]:
+    root = Path(root)
+    if not root.exists():
+        return ()
+    return tuple(
+        MeshAsset(name=path.stem, path=path, bounds=read_obj_bounds(path))
+        for path in sorted(root.glob("*.obj"))
     )
 
 
@@ -128,6 +141,27 @@ def read_ply_bounds(path: Path) -> MeshBounds | None:
             return None
     except (OSError, UnicodeDecodeError, ValueError, struct.error):
         return None
+
+
+def read_obj_bounds(path: Path) -> MeshBounds | None:
+    path = Path(path)
+    if not path.exists():
+        return None
+    points = []
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if not line.startswith("v "):
+                    continue
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                points.append([float(parts[1]), float(parts[2]), float(parts[3])])
+    except (OSError, ValueError):
+        return None
+    if not points:
+        return None
+    return _bounds_from_points(np.asarray(points, dtype=np.float64))
 
 
 def _read_ply_header(fh) -> tuple[bytes, int, str, list[tuple[str, str]]]:

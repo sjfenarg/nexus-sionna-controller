@@ -3,7 +3,9 @@ import pytest
 from isac_6d_sampler.core.trajectory_specs import (
     anchor_trajectory,
     build_trajectory_spec,
+    format_bezier_handles,
     format_point_list,
+    parse_bezier_handles,
     parse_point_list,
     translate_trajectory,
 )
@@ -28,6 +30,20 @@ def test_build_linear_trajectory_uses_first_two_points():
 def test_build_polyline_requires_two_points():
     with pytest.raises(ValueError, match="Polyline"):
         build_trajectory_spec("polyline", "0,0,0", samples=5)
+
+
+def test_build_curve_trajectory_accepts_bezier_handles():
+    spec = build_trajectory_spec(
+        "curve",
+        "0,0,1; 10,0,1",
+        samples=8,
+        bezier_handles_text="0,0,1>0,5,1; 10,5,1>10,0,1",
+    )
+
+    assert spec.kind == "curve"
+    assert spec.points == [(0.0, 0.0, 1.0), (10.0, 0.0, 1.0)]
+    assert spec.bezier_handles[0][1] == (0.0, 5.0, 1.0)
+    assert format_bezier_handles(parse_bezier_handles("0,0,1>0,5,1")) == "0,0,1>0,5,1"
 
 
 def test_translate_trajectory_moves_static_control_point():
@@ -67,3 +83,17 @@ def test_anchor_trajectory_moves_first_point_to_anchor():
 
     assert anchored.points == [(10.0, -2.0, 3.0), (15.0, -2.0, 3.0)]
     assert anchored.samples == 4
+
+
+def test_translate_curve_trajectory_moves_bezier_handles():
+    spec = build_trajectory_spec(
+        "curve",
+        "0,0,1; 10,0,1",
+        samples=8,
+        bezier_handles_text="0,0,1>0,5,1; 10,5,1>10,0,1",
+    )
+
+    moved = translate_trajectory(spec, (1.0, 2.0, 3.0))
+
+    assert moved.points == [(1.0, 2.0, 4.0), (11.0, 2.0, 4.0)]
+    assert moved.bezier_handles[0][1] == (1.0, 7.0, 4.0)

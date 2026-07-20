@@ -3,6 +3,7 @@ import pytest
 
 from isac_6d_sampler.core.model import ChannelMode, FrequencyBand, SPEED_OF_LIGHT_M_PER_S, SimulationRequest
 from isac_6d_sampler.gui.channel_visualizer import (
+    _cfr_to_causal_delay_response,
     channel_power_trace,
     expected_los_x_value,
     load_result_from_reference_h5,
@@ -32,7 +33,7 @@ def test_channel_visualizer_plots_frequency_power_from_stored_channel():
 def test_channel_visualizer_converts_frequency_channel_to_delay_power():
     request = SimulationRequest(dry_run=True)
     request.scene.ensure_defaults()
-    request.bands = [FrequencyBand(start_hz=77e9, stop_hz=78e9, points=4)]
+    request.bands = [FrequencyBand(start_hz=77e9, stop_hz=78e9, points=512)]
     result = DryRunSimulator().simulate(request)
     link = next(link for link in result.timeframes[0].links if link.rx_id == "ue0" and link.tx_id == "bs0")
 
@@ -44,13 +45,13 @@ def test_channel_visualizer_converts_frequency_channel_to_delay_power():
     assert np.all(np.isfinite(y_db))
     assert x_label == "Delay"
     assert x_units == "ns"
-    assert note == "physical CIR path PDP from stored tau/a"
+    assert note == "non-circular direct IDFT of stored H(f)"
 
 
 def test_channel_visualizer_can_use_distance_axis_for_delay_power():
     request = SimulationRequest(dry_run=True)
     request.scene.ensure_defaults()
-    request.bands = [FrequencyBand(start_hz=77e9, stop_hz=78e9, points=4)]
+    request.bands = [FrequencyBand(start_hz=77e9, stop_hz=78e9, points=512)]
     result = DryRunSimulator().simulate(request)
     link = next(link for link in result.timeframes[0].links if link.rx_id == "ue0" and link.tx_id == "bs0")
 
@@ -61,7 +62,19 @@ def test_channel_visualizer_can_use_distance_axis_for_delay_power():
     assert y_db.shape == x.shape
     assert x_label == "Path length"
     assert x_units == "m"
-    assert note == "physical CIR path PDP from stored tau/a"
+    assert note == "non-circular direct IDFT of stored H(f)"
+
+
+def test_cfr_to_delay_response_uses_causal_direct_idft_without_fft_wrap():
+    frequencies = np.linspace(77e9, 78e9, 512, dtype=np.float64)
+    delay_s = 120e-9
+    h = np.exp(-2j * np.pi * frequencies * delay_s).reshape(1, 1, -1)
+
+    values, delays_s = _cfr_to_causal_delay_response(h, frequencies)
+
+    assert delays_s[0] == 0.0
+    assert np.all(delays_s >= 0.0)
+    assert delays_s[np.argmax(np.abs(values).reshape(-1, values.shape[-1])[0])] == pytest.approx(delay_s, abs=1.2e-9)
 
 
 def test_channel_visualizer_expected_los_uses_timeframe_device_positions():
@@ -184,8 +197,20 @@ def test_channel_visualizer_loads_exact_stored_h5_datasets(tmp_path):
     assert loaded_result.metadata["backend"] == "dry_run"
     assert loaded_result.timeframes[0].links[1].rx_id == result.timeframes[0].links[1].rx_id
     assert loaded_result.timeframes[0].links[1].tx_id == result.timeframes[0].links[1].tx_id
-    assert "path_coefficients" in loaded_result.timeframes[0].links[1].metadata
+    groups = h5py_groups(path)
+    assert "tau" not in groups
+    assert "a" not in groups
+    assert "path_coefficients" not in loaded_result.timeframes[0].links[1].metadata
     np.testing.assert_allclose(x, request.bands[0].vector() / 1e9)
     assert y_db.shape == (4,)
     assert np.any(np.isfinite(y_db))
     assert note == "stored H(f)"
+
+
+def h5py_groups(path):
+    import h5py
+
+    names = set()
+    with h5py.File(path, "r") as h5:
+        h5.visititems(lambda name, obj: names.add(name.rsplit("/", maxsplit=1)[-1]) if isinstance(obj, h5py.Group) else None)
+    return names

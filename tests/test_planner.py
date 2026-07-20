@@ -1,3 +1,6 @@
+import numpy as np
+import pytest
+
 from isac_6d_sampler.core.model import (
     BaseStation,
     DynamicObject,
@@ -20,14 +23,16 @@ def test_plan_links_include_monostatic_and_ordered_ue_bs_links():
 
     assert [device.id for device in plan.devices] == ["ue0", "ue1", "bs0", "bs1"]
     assert {"rx0_tx0", "rx1_tx1"}.issubset(names)
-    assert "rx2_tx2" not in names
-    assert "rx3_tx3" not in names
+    assert {"rx2_tx2", "rx3_tx3"}.issubset(names)
     assert "rx0_tx2" in names
     assert "rx2_tx0" in names
     assert "rx1_tx3" in names
     assert "rx3_tx1" in names
     assert "rx0_tx1" not in names
     assert "rx2_tx3" not in names
+    bs_mono = next(link for link in plan.timeframes[0].links if link.dataset_name == "rx2_tx2")
+    assert bs_mono.rx_panel.element_count == 100
+    assert bs_mono.tx_panel.element_count == 1
 
 
 def test_plan_timeframes_follow_ue_and_object_trajectories():
@@ -82,6 +87,30 @@ def test_plan_timeframes_follow_trajectory_orientation_points():
 
     assert orientation_for(ue, plan.timeframes[-1]) == (1.0, 0.5, 0.25)
     assert plan.timeframes[-1].object_orientations["car0"] == (0.2, 0.3, 0.4)
+
+
+def test_curve_plan_orientation_follows_tangent_direction():
+    ue = UserEquipment(
+        id="ue0",
+        trajectory=TrajectorySpec(
+            kind="curve",
+            points=[(0.0, 0.0, 1.5), (0.0, 10.0, 1.5)],
+            bezier_handles=[
+                ((0.0, 0.0, 1.5), (0.0, 4.0, 1.5)),
+                ((0.0, 6.0, 1.5), (0.0, 10.0, 1.5)),
+            ],
+            samples=3,
+        ),
+    )
+    scene = SceneDesign(
+        user_equipments=[ue],
+        base_stations=[BaseStation(id="bs0")],
+    )
+
+    plan = build_simulation_plan(scene)
+
+    assert orientation_for(ue, plan.timeframes[0]) == pytest.approx((np.pi / 2.0, 0.0, 0.0))
+    assert orientation_for(ue, plan.timeframes[-1]) == pytest.approx((np.pi / 2.0, 0.0, 0.0))
 
 
 def test_radiomap_plan_materializes_xy_grid_as_timeframes():

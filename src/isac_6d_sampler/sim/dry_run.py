@@ -35,8 +35,10 @@ class DryRunSimulator:
                     np.asarray(position_for(link.rx, timeframe))
                     - np.asarray(position_for(link.tx, timeframe))
                 )
-                rx_ant = link.rx.panel.element_count
-                tx_ant = link.tx.panel.element_count
+                rx_panel = link.rx_panel
+                tx_panel = link.tx_panel
+                rx_ant = rx_panel.element_count
+                tx_ant = tx_panel.element_count
                 delays = np.full((rx_ant, tx_ant, 1), distance / 299_792_458.0, dtype=np.float64)
                 coeffs = np.full(
                     (rx_ant, tx_ant, 1),
@@ -44,18 +46,18 @@ class DryRunSimulator:
                     dtype=np.complex64,
                 )
                 h = render_channel_samples(delays, coeffs, f_vector, request.channel_mode).reshape(
-                    link.rx.panel.rows,
-                    link.rx.panel.cols,
-                    link.tx.panel.rows,
-                    link.tx.panel.cols,
+                    rx_panel.rows,
+                    rx_panel.cols,
+                    tx_panel.rows,
+                    tx_panel.cols,
                     1,
                     -1,
                 )
                 path_delays = delays.reshape(
-                    link.rx.panel.rows,
-                    link.rx.panel.cols,
-                    link.tx.panel.rows,
-                    link.tx.panel.cols,
+                    rx_panel.rows,
+                    rx_panel.cols,
+                    tx_panel.rows,
+                    tx_panel.cols,
                     1,
                     -1,
                 )
@@ -70,10 +72,10 @@ class DryRunSimulator:
                         metadata={
                             "path_delays_s": path_delays.astype(np.float64),
                             "path_coefficients": coeffs.reshape(
-                                link.rx.panel.rows,
-                                link.rx.panel.cols,
-                                link.tx.panel.rows,
-                                link.tx.panel.cols,
+                                rx_panel.rows,
+                                rx_panel.cols,
+                                tx_panel.rows,
+                                tx_panel.cols,
                                 1,
                                 -1,
                             ).astype(np.complex64),

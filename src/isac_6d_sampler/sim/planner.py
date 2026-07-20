@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from isac_6d_sampler.core.model import BaseStation, SceneDesign, UserEquipment, Vector3
+from isac_6d_sampler.core.model import AntennaPanel, BaseStation, SceneDesign, UserEquipment, Vector3
 from isac_6d_sampler.core.trajectories import (
     radiomap_grid_shape,
     sample_orientations,
@@ -22,6 +22,8 @@ class LinkPlan:
     tx_index: int
     rx: PlannedDevice
     tx: PlannedDevice
+    rx_panel_override: AntennaPanel | None = None
+    tx_panel_override: AntennaPanel | None = None
 
     @property
     def dataset_name(self) -> str:
@@ -30,6 +32,14 @@ class LinkPlan:
     @property
     def is_monostatic(self) -> bool:
         return self.rx_index == self.tx_index
+
+    @property
+    def rx_panel(self) -> AntennaPanel:
+        return self.rx_panel_override or self.rx.panel
+
+    @property
+    def tx_panel(self) -> AntennaPanel:
+        return self.tx_panel_override or self.tx.panel
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +64,8 @@ def build_simulation_plan(scene: SceneDesign) -> SimulationPlan:
 
     Device indexing follows the reference HDF5 convention used by this package:
     all UEs first, then all BSs. Links include each device's monostatic channel
-    and both ordered UE-BS directions. Monostatic links are generated for UEs,
-    which covers radar-like user devices without producing massive BS self-links
-    for large arrays.
+    and both ordered UE-BS directions. BS monostatic links use a single-element
+    TX panel at the BS phase center and the full BS RX panel.
     """
     scene.ensure_defaults()
     user_equipments = planned_user_equipments(scene)
@@ -95,7 +104,17 @@ def _link_plan(devices: tuple[PlannedDevice, ...]) -> tuple[LinkPlan, ...]:
     links: list[LinkPlan] = []
     for rx_index, rx in enumerate(devices):
         for tx_index, tx in enumerate(devices):
-            if (rx_index == tx_index and isinstance(rx, UserEquipment)) or _is_ue_bs_pair(rx, tx):
+            if rx_index == tx_index and isinstance(rx, BaseStation):
+                links.append(
+                    LinkPlan(
+                        rx_index=rx_index,
+                        tx_index=tx_index,
+                        rx=rx,
+                        tx=tx,
+                        tx_panel_override=_single_element_panel(rx.panel),
+                    )
+                )
+            elif (rx_index == tx_index and isinstance(rx, UserEquipment)) or _is_ue_bs_pair(rx, tx):
                 links.append(LinkPlan(rx_index=rx_index, tx_index=tx_index, rx=rx, tx=tx))
     return tuple(links)
 
@@ -208,3 +227,18 @@ def _timeframes(
 
 def _is_ue_bs_pair(rx: PlannedDevice, tx: PlannedDevice) -> bool:
     return rx.__class__ is not tx.__class__
+
+
+def _single_element_panel(panel: AntennaPanel) -> AntennaPanel:
+    return AntennaPanel(
+        rows=1,
+        cols=1,
+        pattern=panel.pattern,
+        polarization=panel.polarization,
+        vertical_spacing_m=0.0,
+        horizontal_spacing_m=0.0,
+        element_diagram=panel.element_diagram,
+        orientation_rad=panel.orientation_rad,
+        v_pol_vector=panel.v_pol_vector,
+        h_pol_vector=panel.h_pol_vector,
+    )

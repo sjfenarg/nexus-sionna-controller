@@ -6,7 +6,7 @@ pytest.importorskip("PySide6", reason="PySide6 is required for GUI tests")
 pytest.importorskip("pyqtgraph", reason="pyqtgraph is required for the 3D GUI")
 from PySide6.QtGui import QMatrix4x4
 
-from isac_6d_sampler.core.model import DynamicObject, RadiomapConfig, SceneDesign
+from isac_6d_sampler.core.model import DynamicObject, RadiomapConfig, SceneDesign, TrajectorySpec, UserEquipment
 from isac_6d_sampler.core.scenarios import MeshAsset
 from isac_6d_sampler.gui.scene_3d import (
     _ANTENNA_DIAGRAM_RADIUS_M,
@@ -15,6 +15,7 @@ from isac_6d_sampler.gui.scene_3d import (
     _antenna_normalized_gain_db,
     _axis_view_angles,
     _closest_point_on_axis_to_ray,
+    _curve_tangent_arrow_segments,
     _intersect_ray_plane,
     _local_axes,
     _plane_handle_points,
@@ -30,6 +31,8 @@ from isac_6d_sampler.gui.scene_3d import (
     _screen_unit_vector,
     _signed_angle,
     _transform_mesh_vertices,
+    _trajectory_preview_positions,
+    _trajectory_world_per_pixel,
     _viewport_rect,
     _wrap_angle,
 )
@@ -283,6 +286,55 @@ def test_radiomap_corner_drag_uses_camera_independent_scale():
     assert bounds == (-10.0 + 50.0 * scale, 10.0, -5.0 - 25.0 * scale, 5.0)
 
 
+def test_curve_preview_positions_are_sampled_and_drag_scale_is_distance_independent():
+    trajectory = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (10.0, 0.0, 1.5)],
+        bezier_handles=[
+            ((0.0, 0.0, 1.5), (0.0, 5.0, 1.5)),
+            ((10.0, 5.0, 1.5), (10.0, 0.0, 1.5)),
+        ],
+        samples=4,
+    )
+
+    preview = _trajectory_preview_positions(trajectory)
+
+    assert preview.shape == (96, 3)
+    assert np.max(preview[:, 1]) > 2.0
+    assert _trajectory_world_per_pixel(trajectory) == pytest.approx(10.0 / 420.0)
+
+
+def test_curve_trajectory_suppresses_endpoint_gizmo_pose():
+    module = __import__("isac_6d_sampler.gui.scene_3d", fromlist=["Scene3DView"])
+    ue = UserEquipment(id="ue0")
+    ue.trajectory = TrajectorySpec(
+        kind="curve",
+        points=[(0.0, 0.0, 1.5), (10.0, 0.0, 1.5)],
+        samples=4,
+    )
+
+    class DummyView:
+        _trajectory_endpoint_pose = module.Scene3DView._trajectory_endpoint_pose
+
+    assert DummyView()._trajectory_endpoint_pose(ue) is None
+
+
+def test_curve_tangent_arrow_segments_follow_path_direction():
+    positions = np.asarray(
+        [
+            [0.0, 0.0, 1.5],
+            [1.0, 0.0, 1.5],
+            [2.0, 0.0, 1.5],
+        ],
+        dtype=np.float64,
+    )
+
+    segments = _curve_tangent_arrow_segments(positions, length=0.5, max_arrows=1)
+
+    assert segments.shape[0] >= 2
+    np.testing.assert_allclose(segments[1] - segments[0], [0.5, 0.0, 0.0])
+
+
 def test_dynamic_object_mesh_vertices_are_centered_on_object_position():
     vertices = np.asarray(
         [
@@ -315,3 +367,21 @@ def test_configured_car_mesh_is_dynamic_not_static():
 
     assert view._static_meshes() == (wall,)
     assert view._dynamic_meshes() == (car,)
+
+
+def test_configured_external_obj_mesh_is_dynamic():
+    module = __import__("isac_6d_sampler.gui.scene_3d", fromlist=["Scene3DView"])
+    car = MeshAsset(name="CAR_obj", path=Path("car.ply"))
+    drone = MeshAsset(name="DRONE_obj", path=Path("drone.obj"))
+    wall = MeshAsset(name="WALL_obj", path=Path("wall.ply"))
+
+    class DummyView:
+        _static_meshes = module.Scene3DView._static_meshes
+        _dynamic_meshes = module.Scene3DView._dynamic_meshes
+        _asset = type("Asset", (), {"meshes": (car, wall), "object_meshes": (drone,)})()
+        _design = SceneDesign(objects=[DynamicObject(id="drone0", object_name="DRONE_obj")])
+
+    view = DummyView()
+
+    assert view._static_meshes() == (wall,)
+    assert view._dynamic_meshes() == (drone,)

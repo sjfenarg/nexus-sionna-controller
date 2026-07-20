@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from isac_6d_sampler.cli import main
-from isac_6d_sampler.core.model import SimulationRequest
+from isac_6d_sampler.core.model import ChannelMode, SimulationRequest
 from isac_6d_sampler.io import reference_h5
 from isac_6d_sampler.io.reference_h5 import ReferenceH5Writer
 from isac_6d_sampler.io.schema import validate_reference_h5
@@ -99,6 +99,7 @@ def test_validate_reference_h5_reports_timestamp_shape_mismatch(tmp_path):
 def test_validate_reference_h5_reports_tau_shape_mismatch(tmp_path):
     request = SimulationRequest(dry_run=True, output_dir=tmp_path)
     request.scene.ensure_defaults()
+    request.channel_mode = ChannelMode.CIR_PATHS
     out = tmp_path / "bad_tau.h5"
     ReferenceH5Writer().write(out, request, DryRunSimulator().simulate(request))
 

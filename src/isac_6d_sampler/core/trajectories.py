@@ -7,16 +7,84 @@ from .model import RadiomapConfig, TrajectorySpec, Vector3
 
 def sample_trajectory(spec: TrajectorySpec) -> np.ndarray:
     """Return positions with shape ``[samples, 3]``."""
-    return _sample_control_points(spec, np.asarray(spec.points, dtype=np.float64))
+    points = np.asarray(spec.points, dtype=np.float64)
+    if spec.kind == "curve":
+        return _sample_bezier_curve(spec, points)
+    return _sample_control_points(spec, points)
 
 
 def sample_orientations(spec: TrajectorySpec, default_orientation: Vector3) -> np.ndarray:
     """Return orientation samples with shape ``[samples, 3]``."""
+    if spec.kind == "curve":
+        return sample_curve_tangent_orientations(spec, default_orientation)
     if spec.orientation_rad_points:
         points = np.unwrap(np.asarray(spec.orientation_rad_points, dtype=np.float64), axis=0)
     else:
         points = np.asarray([default_orientation], dtype=np.float64)
-    return _sample_control_points(spec, points)
+    orientation_spec = TrajectorySpec(
+        kind="polyline" if len(points) > 1 else "static",
+        points=[tuple(float(value) for value in point) for point in points],
+        samples=spec.samples,
+        start_static_fraction=spec.start_static_fraction,
+        end_static_fraction=spec.end_static_fraction,
+        easing=spec.easing,
+    )
+    return _sample_control_points(orientation_spec, points)
+
+
+def sample_curve_tangent_orientations(spec: TrajectorySpec, default_orientation: Vector3) -> np.ndarray:
+    """Return yaw/pitch/roll samples whose local +X follows the curve tangent in XY."""
+    positions = sample_trajectory(spec)
+    if positions.shape[0] <= 1:
+        return np.asarray([default_orientation], dtype=np.float64)
+    tangents = _trajectory_tangents_xy(positions)
+    out = np.zeros((positions.shape[0], 3), dtype=np.float64)
+    out[:, 0] = np.arctan2(tangents[:, 1], tangents[:, 0])
+    return out
+
+
+def normalized_bezier_handles(spec: TrajectorySpec) -> list[tuple[Vector3, Vector3]]:
+    """Return one absolute incoming/outgoing Bezier handle pair per anchor point."""
+    points = [tuple(float(value) for value in point) for point in spec.points]
+    if not points:
+        return []
+    plane_z = float(points[0][2])
+    existing = list(spec.bezier_handles)
+    if len(existing) == len(points):
+        return [
+            (_project_to_curve_plane(handle_in, plane_z), _project_to_curve_plane(handle_out, plane_z))
+            for handle_in, handle_out in existing
+        ]
+    return default_bezier_handles(points)
+
+
+def default_bezier_handles(points: list[Vector3]) -> list[tuple[Vector3, Vector3]]:
+    points = [tuple(float(value) for value in point) for point in points]
+    if not points:
+        return []
+    if len(points) == 1:
+        return [(points[0], points[0])]
+    plane_z = float(points[0][2])
+    handles: list[tuple[Vector3, Vector3]] = []
+    for index, point in enumerate(points):
+        point = _project_to_curve_plane(point, plane_z)
+        previous_point = np.asarray(points[max(index - 1, 0)], dtype=np.float64)
+        next_point = np.asarray(points[min(index + 1, len(points) - 1)], dtype=np.float64)
+        tangent = next_point - previous_point
+        tangent[2] = 0.0
+        handle_in = np.asarray(point, dtype=np.float64) - tangent / 6.0
+        handle_out = np.asarray(point, dtype=np.float64) + tangent / 6.0
+        handle_in[2] = plane_z
+        handle_out[2] = plane_z
+        if index == 0:
+            handle_in = np.asarray(point, dtype=np.float64)
+        if index == len(points) - 1:
+            handle_out = np.asarray(point, dtype=np.float64)
+        handles.append((
+            tuple(float(value) for value in handle_in),
+            tuple(float(value) for value in handle_out),
+        ))
+    return handles
 
 
 def _sample_control_points(spec: TrajectorySpec, points: np.ndarray) -> np.ndarray:
@@ -46,6 +114,99 @@ def _sample_control_points(spec: TrajectorySpec, points: np.ndarray) -> np.ndarr
         local_t = 0.0 if denom == 0.0 else (t - cumulative[segment]) / denom
         out[idx] = points[segment] + local_t * (points[segment + 1] - points[segment])
     return out
+
+
+def _sample_bezier_curve(spec: TrajectorySpec, points: np.ndarray) -> np.ndarray:
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError("Trajectory control points must be a list of 3D coordinates")
+    if len(points) == 1:
+        return points[:1].copy()
+    if len(points) < 2:
+        raise ValueError("Curve trajectories require at least two points")
+    samples = max(1, int(spec.samples))
+    plane_z = float(points[0, 2])
+    anchors = points.copy()
+    anchors[:, 2] = plane_z
+    if samples == 1:
+        return anchors[:1].copy()
+    handles = np.asarray(normalized_bezier_handles(spec), dtype=np.float64)
+    handles[:, :, 2] = plane_z
+    moving_t = _motion_profile(samples, spec.start_static_fraction, spec.end_static_fraction, spec.easing)
+
+    segment_samples = max(24, int(np.ceil(192 / max(len(anchors) - 1, 1))))
+    dense_segments = []
+    for segment_index in range(len(anchors) - 1):
+        t_values = np.linspace(0.0, 1.0, segment_samples + 1, dtype=np.float64)
+        if segment_index:
+            t_values = t_values[1:]
+        dense_segments.append(
+            _cubic_bezier(
+                anchors[segment_index],
+                handles[segment_index, 1],
+                handles[segment_index + 1, 0],
+                anchors[segment_index + 1],
+                t_values,
+            )
+        )
+    dense = np.vstack(dense_segments)
+    segment_lengths = np.linalg.norm(np.diff(dense, axis=0), axis=1)
+    total_length = float(np.sum(segment_lengths))
+    if total_length <= 1e-12:
+        return np.repeat(anchors[:1], samples, axis=0)
+    cumulative = np.concatenate([[0.0], np.cumsum(segment_lengths)]) / total_length
+    out = np.empty((samples, 3), dtype=np.float64)
+    for idx, t in enumerate(moving_t):
+        dense_index = np.searchsorted(cumulative, t, side="right") - 1
+        dense_index = min(max(dense_index, 0), len(segment_lengths) - 1)
+        denom = cumulative[dense_index + 1] - cumulative[dense_index]
+        local_t = 0.0 if denom == 0.0 else (t - cumulative[dense_index]) / denom
+        out[idx] = dense[dense_index] + local_t * (dense[dense_index + 1] - dense[dense_index])
+    out[0] = anchors[0]
+    out[-1] = anchors[-1]
+    out[:, 2] = plane_z
+    return out
+
+
+def _cubic_bezier(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    t_values: np.ndarray,
+) -> np.ndarray:
+    t = t_values.reshape(-1, 1)
+    omt = 1.0 - t
+    return omt**3 * p0 + 3.0 * omt**2 * t * p1 + 3.0 * omt * t**2 * p2 + t**3 * p3
+
+
+def _project_to_curve_plane(point: Vector3, plane_z: float) -> Vector3:
+    return (float(point[0]), float(point[1]), float(plane_z))
+
+
+def _trajectory_tangents_xy(positions: np.ndarray) -> np.ndarray:
+    positions = np.asarray(positions, dtype=np.float64)
+    tangents = np.zeros_like(positions)
+    if len(positions) < 2:
+        tangents[:, 0] = 1.0
+        return tangents
+    tangents[0] = positions[1] - positions[0]
+    tangents[-1] = positions[-1] - positions[-2]
+    if len(positions) > 2:
+        tangents[1:-1] = positions[2:] - positions[:-2]
+    tangents[:, 2] = 0.0
+    norms = np.linalg.norm(tangents[:, :2], axis=1)
+    valid = norms > 1e-12
+    if not np.any(valid):
+        tangents[:, 0] = 1.0
+        return tangents
+    valid_indices = np.flatnonzero(valid)
+    for index in range(len(tangents)):
+        if valid[index]:
+            tangents[index, :2] /= norms[index]
+            continue
+        nearest = valid_indices[int(np.argmin(np.abs(valid_indices - index)))]
+        tangents[index, :2] = tangents[nearest, :2] / norms[nearest]
+    return tangents
 
 
 def sample_radiomap_grid(config: RadiomapConfig) -> np.ndarray:

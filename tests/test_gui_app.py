@@ -110,6 +110,16 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
             main_window.design.user_equipments[0].trajectory.orientation_rad_points[0],
             main_window.design.user_equipments[0].trajectory.orientation_rad_points[1],
         )
+        main_window._set_combo_value(main_window.trajectory_kind, "curve")
+        main_window.add_curve_middle_point()
+        main_window._move_trajectory_handle_from_view("ue0", 0, "out", (0.0, 4.0, 9.0))
+        curve = main_window.design.user_equipments[0].trajectory
+        observed["curve_trajectory_edit"] = (
+            curve.kind,
+            len(curve.points),
+            curve.bezier_handles[0][1],
+            {point[2] for point in curve.points},
+        )
         main_window.add_object()
         observed["added_object_position"] = main_window.design.objects[-1].position
         main_window.samples.setValue(12)
@@ -211,19 +221,20 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
         "max_paths_disabled_when_unlimited": True,
         "antenna_diagrams_visible": 2,
         "antenna_diagrams_hidden": 0,
-        "object_choices": ["CAR_obj"],
+        "object_choices": ["CAR_obj", "DRONE_obj"],
         "scenario_path": str(custom_scenario),
         "scenario_name": custom_scenario.stem,
         "tx_power_roundtrip": 12.5,
-        "radiomap_request_ue_count": 0,
+        "radiomap_request_ue_count": 1,
         "radiomap_template_pattern": "dipole",
         "radiomap_template_shape": (2, 3),
         "dragged_radiomap_bounds": (-2.0, 4.0, -1.0, 3.0),
         "linear_trajectory_from_selection": ("linear", (0.0, 0.0, 1.5), (5.0, 0.0, 1.5)),
         "dragged_linear_endpoint": (2.0, 3.0, 4.0),
         "dragged_endpoint_orientation": ((0.0, 0.0, 0.0), (0.1, 0.2, 0.3)),
+        "curve_trajectory_edit": ("curve", 3, (0.0, 4.0, 1.5), {1.5}),
         "added_object_position": (0.0, 0.0, 0.75),
-        "scene_samples_are_shared": (12, 12, 0),
+        "scene_samples_are_shared": (12, 12, 1),
         "bs_antenna_selected_label": "Selected BS: bs0",
         "ue_antenna_unselected_label": "Selected UE: none",
         "selected_bs_antenna_edit": (7, 8, "dipole"),

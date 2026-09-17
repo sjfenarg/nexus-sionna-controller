@@ -12,7 +12,12 @@ from isac_6d_sampler.core.antenna_patterns import antenna_pattern_spec
 from isac_6d_sampler.core.model import AntennaPanel, ChannelMode, SimulationRequest, TrajectorySpec
 from isac_6d_sampler.core.trajectories import sample_radiomap_grid
 from isac_6d_sampler.sim.channel import IFFT_GRIDDED_DELAY_OVERSAMPLING
-from isac_6d_sampler.sim.materials import calibrated_material_specs, material_spec_for_object_name
+from isac_6d_sampler.sim.materials import (
+    calibrated_material_specs,
+    material_properties_at_frequency,
+    material_spec_for_object_name,
+    tuned_diffuse_scattering_coefficient_at_frequency,
+)
 from isac_6d_sampler.sim.planner import planned_user_equipments
 from isac_6d_sampler.sim.power import dbm_to_watt
 from isac_6d_sampler.sim.results import SimulationResult
@@ -81,7 +86,7 @@ class ReferenceH5Writer:
         self._write_frequency_bands(params, request)
         self._write_sionna_params(params, request)
         self._write_channel_params(params, request, result)
-        self._write_material_params(params)
+        self._write_material_params(params, result)
         self._write_device_params(params, request, user_equipments)
         self._write_link_params(params, request, result, user_equipments)
 
@@ -160,18 +165,21 @@ class ReferenceH5Writer:
                 np.arange(samples, dtype=np.float64) * delay_bin_width_s,
             )
 
-    def _write_material_params(self, params) -> None:
+    def _write_material_params(self, params, result: SimulationResult) -> None:
         group = params.require_group("material_params")
-        group.attrs["source"] = "isac_journal"
+        representative_frequency_hz = float(np.mean(np.asarray(result.frequency_vector_hz, dtype=np.float64)))
+        group.attrs["source"] = "itu-r-p2040-3_frequency_evaluated_with_project_tuning"
         specs = calibrated_material_specs()
+        group.attrs["representative_frequency_hz"] = representative_frequency_hz
         group.attrs["n_materials"] = len(specs)
         for idx, spec in enumerate(specs):
             material_group = group.require_group(f"material{idx}")
             material_group.attrs["object_prefix"] = spec.object_prefix
             material_group.attrs["name"] = spec.name
-            material_group.attrs["relative_permittivity"] = float(spec.relative_permittivity)
-            material_group.attrs["conductivity"] = float(spec.conductivity)
-            material_group.attrs["scattering_coefficient"] = float(spec.scattering_coefficient)
+            relative_permittivity, conductivity = material_properties_at_frequency(spec, representative_frequency_hz)
+            material_group.attrs["relative_permittivity"] = float(relative_permittivity)
+            material_group.attrs["conductivity"] = float(conductivity)
+            material_group.attrs["scattering_coefficient"] = float(tuned_diffuse_scattering_coefficient_at_frequency(spec, representative_frequency_hz))
             material_group.attrs["scattering_pattern"] = spec.scattering_pattern
             material_group.attrs["alpha_r"] = float(spec.alpha_r)
             material_group.attrs["source"] = spec.source

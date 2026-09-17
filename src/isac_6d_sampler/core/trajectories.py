@@ -33,12 +33,12 @@ def sample_orientations(spec: TrajectorySpec, default_orientation: Vector3) -> n
 
 
 def sample_curve_tangent_orientations(spec: TrajectorySpec, default_orientation: Vector3) -> np.ndarray:
-    """Return yaw/pitch/roll samples whose local +X follows the curve tangent in XY."""
+    """Return orientations whose yaw follows the curve tangent and pitch/roll stay configured."""
     positions = sample_trajectory(spec)
     if positions.shape[0] <= 1:
         return np.asarray([default_orientation], dtype=np.float64)
     tangents = _trajectory_tangents_xy(positions)
-    out = np.zeros((positions.shape[0], 3), dtype=np.float64)
+    out = np.repeat(np.asarray([default_orientation], dtype=np.float64), positions.shape[0], axis=0)
     out[:, 0] = np.arctan2(tangents[:, 1], tangents[:, 0])
     return out
 

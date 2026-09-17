@@ -59,18 +59,19 @@ class SimulationPlan:
     timeframes: tuple[TimeframePlan, ...]
 
 
-def build_simulation_plan(scene: SceneDesign) -> SimulationPlan:
+def build_simulation_plan(scene: SceneDesign, *, include_ue_ue_links: bool = False) -> SimulationPlan:
     """Create the ordered device/link/timeframe plan used by all backends.
 
     Device indexing follows the reference HDF5 convention used by this package:
     all UEs first, then all BSs. Links include each device's monostatic channel
-    and both ordered UE-BS directions. BS monostatic links use a single-element
-    TX panel at the BS phase center and the full BS RX panel.
+    and both ordered UE-BS directions. If enabled, ordered UE-UE bistatic links
+    are included as well. BS monostatic links use a single-element TX panel at
+    the BS phase center and the full BS RX panel.
     """
     scene.ensure_defaults()
     user_equipments = planned_user_equipments(scene)
     devices: tuple[PlannedDevice, ...] = (*user_equipments, *scene.base_stations)
-    links = _link_plan(devices)
+    links = _link_plan(devices, include_ue_ue_links=include_ue_ue_links)
     frames = _timeframes(scene, user_equipments, links)
     return SimulationPlan(devices=devices, timeframes=tuple(frames))
 
@@ -100,7 +101,7 @@ def planned_user_equipments(scene: SceneDesign) -> tuple[UserEquipment, ...]:
     return (template,)
 
 
-def _link_plan(devices: tuple[PlannedDevice, ...]) -> tuple[LinkPlan, ...]:
+def _link_plan(devices: tuple[PlannedDevice, ...], *, include_ue_ue_links: bool = False) -> tuple[LinkPlan, ...]:
     links: list[LinkPlan] = []
     for rx_index, rx in enumerate(devices):
         for tx_index, tx in enumerate(devices):
@@ -114,9 +115,17 @@ def _link_plan(devices: tuple[PlannedDevice, ...]) -> tuple[LinkPlan, ...]:
                         tx_panel_override=_single_element_panel(rx.panel),
                     )
                 )
-            elif (rx_index == tx_index and isinstance(rx, UserEquipment)) or _is_ue_bs_pair(rx, tx):
+            elif (
+                (rx_index == tx_index and isinstance(rx, UserEquipment))
+                or _is_ue_bs_pair(rx, tx)
+                or (include_ue_ue_links and _is_ordered_ue_ue_pair(rx, tx))
+            ):
                 links.append(LinkPlan(rx_index=rx_index, tx_index=tx_index, rx=rx, tx=tx))
     return tuple(links)
+
+
+def _is_ordered_ue_ue_pair(rx: PlannedDevice, tx: PlannedDevice) -> bool:
+    return isinstance(rx, UserEquipment) and isinstance(tx, UserEquipment) and rx.id != tx.id
 
 
 def _timeframes(

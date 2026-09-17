@@ -24,11 +24,12 @@ backend_test/
 *.h5
 
 # Local request/config scratch space
-configs/*.json
 *.local.json
+*.bak
 
-# Large raw measurement exports kept outside git history
-meas/*.mat
+# Measurements and raw exports kept outside git history
+meas/
+*.mat
 
 # Notebooks and editor metadata
 .ipynb_checkpoints/
@@ -40,3 +41,19 @@ meas/*.mat
 # OS metadata
 Thumbs.db
 .DS_Store
+
+# Research
+channel_charting/
+superres/
+scenes/channel_charting_dataset/
+scenes/channel_charting_dataset_v2/
+scenes/channel_charting_pilot_6ue_16s.json
+
+# Large generated/raw scenario assets
+docs/Tree_V10_Final.obj
+scenarios/scenebaker_upv_vera_lidar/
+scenarios/scenebaker_upv_vera_lidar_trees/
+
+# Generated scenario diagnostics
+scenarios/**/plots/
+scenarios/**/*.png

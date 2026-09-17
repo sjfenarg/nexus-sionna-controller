@@ -81,6 +81,7 @@ def main() -> int:
             self.worker = None
             self.channel_visualizer = None
             self._simulation_preview_design = None
+            self._last_simulation_result = None
             self._syncing_controls = False
 
             self.scenario_assets = discover_scenarios(self.scenario_root)
@@ -120,6 +121,22 @@ def main() -> int:
             antenna_button.setObjectName("view_antenna_diagrams")
             antenna_button.clicked.connect(self.show_antenna_diagrams)
             view_buttons.addWidget(antenna_button)
+            self.paths_button = QPushButton("Paths")
+            self.paths_button.setObjectName("view_simulation_paths")
+            self.paths_button.clicked.connect(self.show_simulation_paths)
+            self.path_min_range = _double_spin(0.0, 10_000.0, 0.0, decimals=2)
+            self.path_min_range.setObjectName("path_min_range_m")
+            self.path_max_range = _double_spin(0.0, 10_000.0, 150.0, decimals=2)
+            self.path_max_range.setObjectName("path_max_range_m")
+            self.path_link_combo = QComboBox()
+            self.path_link_combo.setObjectName("path_link_combo")
+            self.path_link_combo.addItem("All BS->UE", None)
+            view_buttons.addWidget(self.paths_button)
+            view_buttons.addWidget(QLabel("Path range m"))
+            view_buttons.addWidget(self.path_min_range)
+            view_buttons.addWidget(self.path_max_range)
+            view_buttons.addWidget(QLabel("Link"))
+            view_buttons.addWidget(self.path_link_combo)
             view_buttons.addStretch(1)
 
             self.bs_rows = _spin(1, 128, 10)
@@ -180,6 +197,8 @@ def main() -> int:
             self.diffuse.setChecked(True)
             self.refraction = QCheckBox()
             self.refraction.setChecked(False)
+            self.ue_ue_links = QCheckBox()
+            self.ue_ue_links.setChecked(False)
             self.synthetic_array = QCheckBox()
             self.synthetic_array.setChecked(False)
             self.merge_shapes = QCheckBox()
@@ -320,6 +339,7 @@ def main() -> int:
                     ("Specular", self.specular),
                     ("Diffuse", self.diffuse),
                     ("Refraction", self.refraction),
+                    ("UE-UE links", self.ue_ue_links),
                     ("Synthetic array", self.synthetic_array),
                     ("Merge shapes", self.merge_shapes),
                     ("Use GPU", self.use_gpu),
@@ -417,6 +437,42 @@ def main() -> int:
         def show_antenna_diagrams(self):
             self.view.show_antenna_diagrams()
             QTimer.singleShot(10_000, self.view.hide_antenna_diagrams)
+
+        def show_simulation_paths(self):
+            if self.view.simulation_paths_visible():
+                self.view.hide_simulation_paths()
+                self.log.append("Hid simulation paths")
+                return
+            if self._last_simulation_result is None:
+                self.log.append("Run a simulation first. Path cache is only available after simulation completes.")
+                return
+            min_range = self.path_min_range.value()
+            max_range = self.path_max_range.value()
+            if max_range <= min_range:
+                self.log.append("Path max range must be larger than min range")
+                return
+            link_filter = self.path_link_combo.currentData()
+            tx_filter = None
+            rx_filter = None
+            if isinstance(link_filter, tuple) and len(link_filter) == 2:
+                tx_filter, rx_filter = link_filter
+            count, stats = self.view.show_simulation_paths(
+                self._last_simulation_result,
+                min_range_m=min_range,
+                max_range_m=max_range,
+                tx_id=tx_filter,
+                rx_id=rx_filter,
+            )
+            if count:
+                rejected = int(stats.get("paths_rejected_geometry_mismatch", 0))
+                self.log.append(
+                    f"Showing {count} strongest separated BS->UE paths in requested range "
+                    f"{min_range:.2f}-{max_range:.2f} m for {self.path_link_combo.currentText()}; "
+                    f"actual delay ranges {stats['selected_range_min_m']:.3f}-{stats['selected_range_max_m']:.3f} m; "
+                    f"rejected {rejected} inconsistent geometries"
+                )
+            else:
+                self.log.append(f"No drawable BS->UE path cache found in the last simulation. Stats: {stats}")
 
         def add_bs(self):
             self._push_undo("add BS")
@@ -1278,6 +1334,7 @@ def main() -> int:
             request.sionna.specular_reflection = self.specular.isChecked()
             request.sionna.diffuse_reflection = self.diffuse.isChecked()
             request.sionna.refraction = self.refraction.isChecked()
+            request.sionna.ue_ue_links = self.ue_ue_links.isChecked()
             request.sionna.synthetic_array = self.synthetic_array.isChecked()
             request.sionna.merge_shapes = self.merge_shapes.isChecked()
             request.sionna.use_gpu = self.use_gpu.isChecked()
@@ -1340,6 +1397,7 @@ def main() -> int:
             self.specular.setChecked(request.sionna.specular_reflection)
             self.diffuse.setChecked(request.sionna.diffuse_reflection)
             self.refraction.setChecked(request.sionna.refraction)
+            self.ue_ue_links.setChecked(request.sionna.ue_ue_links)
             self.synthetic_array.setChecked(request.sionna.synthetic_array)
             self.merge_shapes.setChecked(request.sionna.merge_shapes)
             self.use_gpu.setChecked(request.sionna.use_gpu)
@@ -1427,6 +1485,10 @@ def main() -> int:
             if request.dry_run:
                 self.log.append("Dry run enabled: scenario meshes are not ray traced")
             self.log.append("Starting simulation")
+            self.view.hide_simulation_paths()
+            self._last_simulation_result = None
+            self.path_link_combo.clear()
+            self.path_link_combo.addItem("All BS->UE", None)
             if self.channel_visualizer_enabled.isChecked():
                 self.channel_visualizer = ChannelVisualizerWindow()
                 self.channel_visualizer.show()
@@ -1464,6 +1526,8 @@ def main() -> int:
             self.refresh(reset_camera=False)
 
         def _on_result_ready(self, request, result):
+            self._last_simulation_result = result
+            self._refresh_path_link_choices(result)
             if not self.channel_visualizer_enabled.isChecked():
                 return
             if self.channel_visualizer is None:
@@ -1471,6 +1535,27 @@ def main() -> int:
                 self.channel_visualizer.show()
             self.channel_visualizer.set_result(request, result)
             self.log.append("Updated realtime channel visualizer")
+
+        def _refresh_path_link_choices(self, result):
+            current = self.path_link_combo.currentData()
+            self.path_link_combo.blockSignals(True)
+            self.path_link_combo.clear()
+            self.path_link_combo.addItem("All BS->UE", None)
+            pairs = []
+            if result is not None and getattr(result, "timeframes", None):
+                for link in result.timeframes[0].links:
+                    tx_id = str(link.tx_id)
+                    rx_id = str(link.rx_id)
+                    if tx_id.startswith("bs") and rx_id.startswith("ue"):
+                        pairs.append((tx_id, rx_id))
+            for tx_id, rx_id in sorted(set(pairs), key=lambda item: (_natural_id_key(item[0]), _natural_id_key(item[1]))):
+                self.path_link_combo.addItem(f"{tx_id} -> {rx_id}", (tx_id, rx_id))
+            if current is not None:
+                for idx in range(self.path_link_combo.count()):
+                    if self.path_link_combo.itemData(idx) == current:
+                        self.path_link_combo.setCurrentIndex(idx)
+                        break
+            self.path_link_combo.blockSignals(False)
 
         def _on_finished(self, path):
             self.progress.setValue(self.progress.maximum())
@@ -1493,6 +1578,12 @@ def main() -> int:
             self._simulation_preview_design = None
             self.refresh(reset_camera=False)
             self.worker = None
+
+    def _natural_id_key(value):
+        text = str(value)
+        prefix = text.rstrip("0123456789")
+        suffix = text[len(prefix):]
+        return (prefix, int(suffix) if suffix.isdigit() else -1, text)
 
     def _section(title, rows, *, object_name):
         group = QGroupBox(title)

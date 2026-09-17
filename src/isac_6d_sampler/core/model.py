@@ -147,6 +147,7 @@ class SionnaConfig:
     use_gpu: bool = True
     batch_timeframes: int = 1
     max_timeframes: int = 100_000
+    ue_ue_links: bool = False
 
 
 @dataclass(slots=True)

@@ -189,6 +189,7 @@ def _sionna(data: dict[str, Any]) -> SionnaConfig:
         use_gpu=bool(data.get("use_gpu", True)),
         batch_timeframes=int(data.get("batch_timeframes", 1)),
         max_timeframes=int(data.get("max_timeframes", 100_000)),
+        ue_ue_links=bool(data.get("ue_ue_links", False)),
     )
 
 

@@ -69,10 +69,11 @@ def test_curve_orientation_follows_xy_tangent_yaw():
         samples=5,
     )
 
-    orientations = sample_orientations(spec, (0.0, 0.0, 0.0))
+    orientations = sample_orientations(spec, (0.0, 0.25, 1.5))
 
     np.testing.assert_allclose(orientations[:, 0], np.pi / 2.0)
-    np.testing.assert_allclose(orientations[:, 1:], 0.0)
+    np.testing.assert_allclose(orientations[:, 1], 0.25)
+    np.testing.assert_allclose(orientations[:, 2], 1.5)
 
 
 def test_default_bezier_handles_create_one_pair_per_anchor():

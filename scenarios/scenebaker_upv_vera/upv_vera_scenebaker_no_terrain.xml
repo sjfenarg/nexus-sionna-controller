@@ -1,0 +1,99 @@
+<?xml version='1.0' encoding='utf-8'?>
+<scene version="3.0.0">
+    <integrator type="path" />
+    <bsdf type="itu-radio-material" id="mat-building_wall">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.2" />
+        <float name="scattering_coefficient" value="0.1" />
+        <float name="xpd_coefficient" value="0.0" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-building_roof">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.15" />
+        <float name="scattering_coefficient" value="0.1" />
+        <float name="xpd_coefficient" value="0.0" />
+    </bsdf>
+    <bsdf type="radio-material" id="mat-road">
+        <float name="relative_permittivity" value="3.18" />
+        <float name="conductivity" value="0.003" />
+        <float name="thickness" value="0.05" />
+        <float name="scattering_coefficient" value="0.2" />
+        <float name="xpd_coefficient" value="0.0" />
+        <rgb name="color" value="0.086500 0.090842 0.088656" />
+    </bsdf>
+    <bsdf type="radio-material" id="mat-vegetation">
+        <float name="relative_permittivity" value="1.5" />
+        <float name="conductivity" value="0.01" />
+        <float name="thickness" value="0.5" />
+        <float name="scattering_coefficient" value="0.6" />
+        <float name="xpd_coefficient" value="0.1" />
+        <rgb name="color" value="0.007000 0.558000 0.005000" />
+    </bsdf>
+    <bsdf type="radio-material" id="mat-park">
+        <float name="relative_permittivity" value="2.0" />
+        <float name="conductivity" value="0.02" />
+        <float name="thickness" value="0.1" />
+        <float name="scattering_coefficient" value="0.3" />
+        <float name="xpd_coefficient" value="0.0" />
+        <rgb name="color" value="0.090000 0.520000 0.120000" />
+    </bsdf>
+    <bsdf type="radio-material" id="mat-water">
+        <float name="relative_permittivity" value="80.0" />
+        <float name="conductivity" value="0.5" />
+        <float name="thickness" value="0.1" />
+        <float name="scattering_coefficient" value="0.02" />
+        <float name="xpd_coefficient" value="0.0" />
+        <rgb name="color" value="0.009000 0.002000 0.800000" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-ground">
+        <string name="type" value="medium_dry_ground" />
+        <float name="thickness" value="0.1" />
+        <float name="scattering_coefficient" value="0.3" />
+        <float name="xpd_coefficient" value="0.0" />
+    </bsdf>
+    <shape type="ply" id="py_ground">
+        <string name="filename" value="meshes/Plane.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-ground" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_buildings_roof">
+        <string name="filename" value="meshes/map_osm_buildings-roof.ply" />
+        <boolean name="face_normals" value="true" />
+        <ref id="mat-building_roof" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_buildings_wall">
+        <string name="filename" value="meshes/map_osm_buildings-wall.ply" />
+        <boolean name="face_normals" value="true" />
+        <ref id="mat-building_wall" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_paths_cycleway">
+        <string name="filename" value="meshes/map_osm_paths_cycleway.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-road" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_paths_footway">
+        <string name="filename" value="meshes/map_osm_paths_footway.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-road" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_paths_steps">
+        <string name="filename" value="meshes/map_osm_paths_steps.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-road" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_roads_pedestrian">
+        <string name="filename" value="meshes/map_osm_roads_pedestrian.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-road" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_roads_service">
+        <string name="filename" value="meshes/map_osm_roads_service.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-road" name="bsdf" />
+    </shape>
+    <shape type="ply" id="py_vegetation">
+        <string name="filename" value="meshes/map_osm_vegetation.ply" />
+        <boolean name="face_normals" value="false" />
+        <ref id="mat-vegetation" name="bsdf" />
+    </shape>
+</scene>

@@ -1,0 +1,10 @@
+mesh,category,vertices,faces,x_min,x_max,y_min,y_max,z_min,z_max
+map_osm_buildings-roof,roof,469,401,-186.567,187.064,-149.680,187.074,3.000,15.000
+map_osm_buildings-wall,building,750,906,-186.567,187.064,-149.680,187.074,0.000,15.000
+map_osm_paths_cycleway,path,50,48,-3.403,196.891,99.462,141.549,0.300,0.300
+map_osm_paths_footway,path,395,407,-182.572,229.467,-129.457,161.505,0.300,0.300
+map_osm_paths_steps,path,23,17,43.431,108.498,-58.028,117.484,0.300,0.300
+map_osm_roads_pedestrian,road,132,136,-192.134,174.542,-246.945,30.246,0.300,0.300
+map_osm_roads_service,road,32,28,-220.897,123.415,65.050,134.331,0.300,0.300
+map_osm_vegetation,vegetation,410,547,-128.880,128.880,-116.884,116.887,0.000,0.500
+Plane,ground,4,2,-700.000,700.000,-699.999,700.001,-0.800,-0.800

@@ -1,0 +1,2 @@
+dx_m,dy_m,dz_m,rotation_deg,rotation_center_x,rotation_center_y,score_m,method
+29.484666,-206.939652,0.000000,180.182727,11.681282,-6.442456,5.273746,"mesh-only 2D rotation+translation registration, median symmetric nearest-neighbor score"

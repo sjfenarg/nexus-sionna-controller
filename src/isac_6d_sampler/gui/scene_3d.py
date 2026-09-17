@@ -9,7 +9,13 @@ from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QMatrix4x4, QVector3D
 import pyqtgraph.opengl as gl
 
-from isac_6d_sampler.core.antenna_patterns import antenna_pattern_spec
+from isac_6d_sampler.core.antenna_patterns import (
+    POWERLOG_PATTERN,
+    QOM_OMNI_PATTERN,
+    antenna_pattern_spec,
+    powerlog_normalized_gain_db_from_local_dirs,
+    qom_omni_normalized_gain_db_from_local_dirs,
+)
 from isac_6d_sampler.core.model import DYNAMIC_SCENE_OBJECT_NAMES, RadiomapConfig, SceneDesign, TrajectorySpec
 from isac_6d_sampler.core.scenarios import (
     MeshBounds,
@@ -76,6 +82,9 @@ class Scene3DView(gl.GLViewWidget):
         self._items: list[object] = []
         self._dynamic_items: list[object] = []
         self._antenna_diagram_items: list[object] = []
+        self._path_items: list[object] = []
+        self._path_overlay_entries: list[dict] = []
+        self._path_overlay_visible = False
         self._last_camera_bounds: MeshBounds | None = None
         self._drag_state: dict | None = None
         self._orthographic = False
@@ -134,6 +143,73 @@ class Scene3DView(gl.GLViewWidget):
 
     def antenna_diagrams_visible(self) -> bool:
         return bool(self._antenna_diagram_items)
+
+    def show_simulation_paths(
+        self,
+        result,
+        *,
+        max_paths: int = 36,
+        min_delay_separation_ns: float = 2.0,
+        min_range_m: float | None = None,
+        max_range_m: float | None = None,
+        tx_id: str | None = None,
+        rx_id: str | None = None,
+    ) -> tuple[int, dict]:
+        self.hide_simulation_paths()
+        if result is None or not getattr(result, "timeframes", None):
+            return 0, {"reason": "no result/timeframes"}
+        timeframe = result.timeframes[0]
+        device_positions = timeframe.metadata.get("device_positions", {})
+        selected, stats = _select_important_bs_to_ue_paths(
+            timeframe.links,
+            device_positions,
+            max_paths=max_paths,
+            min_delay_separation_s=float(min_delay_separation_ns) * 1e-9,
+            min_range_m=min_range_m,
+            max_range_m=max_range_m,
+            tx_id=tx_id,
+            rx_id=rx_id,
+        )
+        self._path_overlay_entries = list(selected)
+        self._path_overlay_visible = bool(selected)
+        self._add_path_overlay_items()
+        return len(selected), stats
+
+    def hide_simulation_paths(self) -> None:
+        for item in list(self._path_items):
+            self._safe_remove_item(item)
+            if item in self._items:
+                self._items.remove(item)
+        self._path_items.clear()
+        self._path_overlay_visible = False
+        self._path_overlay_entries.clear()
+
+    def simulation_paths_visible(self) -> bool:
+        return self._path_overlay_visible and bool(self._path_overlay_entries)
+
+    def _add_path_overlay_items(self) -> None:
+        for item in list(self._path_items):
+            self._safe_remove_item(item)
+            if item in self._items:
+                self._items.remove(item)
+        self._path_items.clear()
+        for entry in self._path_overlay_entries:
+            item = gl.GLLinePlotItem(
+                pos=entry["points"].astype(np.float32),
+                color=entry["color"],
+                width=entry["width"],
+                antialias=True,
+                mode="line_strip",
+            )
+            self.addItem(item)
+            self._items.append(item)
+            self._path_items.append(item)
+
+    def _safe_remove_item(self, item) -> None:
+        try:
+            self.removeItem(item)
+        except ValueError:
+            pass
 
     def restore_perspective(self) -> None:
         if self._orthographic:
@@ -346,16 +422,19 @@ class Scene3DView(gl.GLViewWidget):
         self._add_axes(bounds)
         self._add_meshes()
         self._add_dynamic_items()
+        if self._path_overlay_visible and self._path_overlay_entries:
+            self._add_path_overlay_items()
 
         if reset_camera and bounds is not None:
             self._fit_camera(bounds)
 
     def _clear_items(self) -> None:
-        for item in self._items:
-            self.removeItem(item)
+        for item in list(self._items):
+            self._safe_remove_item(item)
         self._items.clear()
         self._dynamic_items.clear()
         self._antenna_diagram_items.clear()
+        self._path_items.clear()
 
     def _add_item(self, item) -> None:
         self.addItem(item)
@@ -367,8 +446,8 @@ class Scene3DView(gl.GLViewWidget):
         self._dynamic_items.append(item)
 
     def _rebuild_dynamic_items(self) -> None:
-        for item in self._dynamic_items:
-            self.removeItem(item)
+        for item in list(self._dynamic_items):
+            self._safe_remove_item(item)
             if item in self._items:
                 self._items.remove(item)
         self._dynamic_items.clear()
@@ -1890,12 +1969,215 @@ def _antenna_diagram_item(
     )
     return gl.GLMeshItem(
         meshdata=mesh_data,
-        smooth=True,
+        smooth=False,
         drawFaces=True,
         drawEdges=False,
         shader="balloon",
         glOptions="translucent",
     )
+
+
+def _select_important_bs_to_ue_paths(
+    links,
+    device_positions: dict,
+    *,
+    max_paths: int,
+    min_delay_separation_s: float,
+    min_range_m: float | None = None,
+    max_range_m: float | None = None,
+    tx_id: str | None = None,
+    rx_id: str | None = None,
+) -> tuple[list[dict], dict]:
+    stats = {
+        "links_total": len(links),
+        "bs_to_ue_links": 0,
+        "links_with_positions": 0,
+        "links_with_path_metadata": 0,
+        "candidate_paths": 0,
+        "selected_paths": 0,
+        "range_filter_min_m": None if min_range_m is None else float(min_range_m),
+        "range_filter_max_m": None if max_range_m is None else float(max_range_m),
+        "tx_filter": tx_id or "all",
+        "rx_filter": rx_id or "all",
+        "paths_after_range_filter": 0,
+        "paths_rejected_geometry_mismatch": 0,
+    }
+    candidates = []
+    for link in links:
+        if not (str(link.tx_id).startswith("bs") and str(link.rx_id).startswith("ue")):
+            continue
+        if tx_id is not None and str(link.tx_id) != str(tx_id):
+            continue
+        if rx_id is not None and str(link.rx_id) != str(rx_id):
+            continue
+        stats["bs_to_ue_links"] += 1
+        tx_pos = device_positions.get(link.tx_id)
+        rx_pos = device_positions.get(link.rx_id)
+        if tx_pos is None or rx_pos is None:
+            continue
+        stats["links_with_positions"] += 1
+        delays = link.metadata.get("path_delays_s")
+        coeffs = link.metadata.get("path_coefficients")
+        if delays is None or coeffs is None:
+            continue
+        stats["links_with_path_metadata"] += 1
+        vertices = link.metadata.get("path_vertices")
+        path_rows = _flatten_path_metrics(delays, coeffs)
+        stats["candidate_paths"] += len(path_rows)
+        if not path_rows:
+            continue
+        best_by_delay_bin = {}
+        for path_index, delay_s, power, rx_ant_index, tx_ant_index in path_rows:
+            if not np.isfinite(delay_s) or delay_s < 0.0 or not np.isfinite(power) or power <= 0.0:
+                continue
+            range_m = delay_s * 299_792_458.0
+            if min_range_m is not None and range_m < float(min_range_m):
+                continue
+            if max_range_m is not None and range_m > float(max_range_m):
+                continue
+            stats["paths_after_range_filter"] += 1
+            bin_key = int(round(delay_s / max(min_delay_separation_s, 1e-12)))
+            previous = best_by_delay_bin.get(bin_key)
+            if previous is None or power > previous["power"]:
+                best_by_delay_bin[bin_key] = {
+                    "link": link,
+                    "path_index": int(path_index),
+                    "delay_s": float(delay_s),
+                    "power": float(power),
+                    "range_m": float(range_m),
+                    "tx_pos": np.asarray(tx_pos, dtype=np.float64),
+                    "rx_pos": np.asarray(rx_pos, dtype=np.float64),
+                    "vertices": vertices,
+                    "rx_ant_index": int(rx_ant_index),
+                    "tx_ant_index": int(tx_ant_index),
+                }
+        candidates.extend(best_by_delay_bin.values())
+    candidates.sort(key=lambda item: item["power"], reverse=True)
+    selected: list[dict] = []
+    used_delays_by_link: dict[tuple[str, str], list[float]] = {}
+    for candidate in candidates:
+        link_key = (str(candidate["link"].tx_id), str(candidate["link"].rx_id))
+        used_delays = used_delays_by_link.setdefault(link_key, [])
+        if any(abs(candidate["delay_s"] - value) < min_delay_separation_s for value in used_delays):
+            continue
+        points = _path_polyline_points(candidate)
+        if points is None or len(points) < 2:
+            continue
+        geometry_range_m = float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
+        expected_range_m = float(candidate["range_m"])
+        tolerance_m = max(0.25, 0.01 * expected_range_m)
+        if abs(geometry_range_m - expected_range_m) > tolerance_m:
+            stats["paths_rejected_geometry_mismatch"] += 1
+            continue
+        used_delays.append(candidate["delay_s"])
+        selected.append({**candidate, "points": points, "geometry_range_m": geometry_range_m})
+        if len(selected) >= max_paths:
+            break
+    if not selected:
+        return [], stats
+    max_power = max(item["power"] for item in selected)
+    min_power = min(item["power"] for item in selected)
+    span_db = max(1.0, 10.0 * np.log10(max(max_power, 1e-30) / max(min_power, 1e-30)))
+    out = []
+    for item in selected:
+        rel_db = 10.0 * np.log10(max(item["power"], 1e-30) / max(max_power, 1e-30))
+        normalized = float(np.clip(1.0 + rel_db / max(span_db, 1.0), 0.0, 1.0))
+        out.append(
+            {
+                "points": item["points"],
+                "color": _path_color(normalized),
+                "width": 1.5 + 4.5 * normalized,
+                "tx_id": str(item["link"].tx_id),
+                "rx_id": str(item["link"].rx_id),
+                "range_m": float(item["range_m"]),
+                "geometry_range_m": float(item["geometry_range_m"]),
+                "delay_ns": float(item["delay_s"] * 1e9),
+                "power": float(item["power"]),
+            }
+        )
+    stats["selected_paths"] = len(out)
+    stats["selected_range_min_m"] = min(item["range_m"] for item in selected)
+    stats["selected_range_max_m"] = max(item["range_m"] for item in selected)
+    return out, stats
+
+
+def _flatten_path_metrics(delays, coeffs) -> list[tuple[int, float, float, int, int]]:
+    delays_arr = np.asarray(delays, dtype=np.float64)
+    coeffs_arr = np.asarray(coeffs)
+    if delays_arr.size == 0 or coeffs_arr.size == 0:
+        return []
+    path_count = delays_arr.shape[-1]
+    delays_flat = delays_arr.reshape((-1, path_count))
+    if coeffs_arr.shape[-1] != path_count:
+        return []
+    coeffs_flat = coeffs_arr.reshape((-1, path_count))
+    if coeffs_flat.shape[0] != delays_flat.shape[0]:
+        return []
+    prefix_shape = delays_arr.shape[:-1]
+    if len(prefix_shape) < 4:
+        return []
+    rx_cols = int(prefix_shape[1])
+    tx_cols = int(prefix_shape[3])
+    out = []
+    for idx in range(path_count):
+        delay_column = delays_flat[:, idx]
+        coeff_column = coeffs_flat[:, idx]
+        coeff_power = np.abs(coeff_column) ** 2
+        valid = np.isfinite(delay_column) & (delay_column >= 0.0) & np.isfinite(coeff_power) & (coeff_power > 0.0)
+        if not np.any(valid):
+            continue
+        valid_rows = np.flatnonzero(valid)
+        row_index = int(valid_rows[np.argmax(coeff_power[valid_rows])])
+        antenna_index = np.unravel_index(row_index, prefix_shape)
+        rx_ant_index = int(antenna_index[0]) * rx_cols + int(antenna_index[1])
+        tx_ant_index = int(antenna_index[2]) * tx_cols + int(antenna_index[3])
+        out.append(
+            (
+                idx,
+                float(delay_column[row_index]),
+                float(coeff_power[row_index]),
+                rx_ant_index,
+                tx_ant_index,
+            )
+        )
+    return out
+
+
+def _path_polyline_points(candidate: dict) -> np.ndarray | None:
+    tx_pos = np.asarray(candidate["tx_pos"], dtype=np.float64)
+    rx_pos = np.asarray(candidate["rx_pos"], dtype=np.float64)
+    points = [tx_pos]
+    vertices = candidate.get("vertices")
+    path_index = int(candidate.get("path_index", 0))
+    if vertices is not None:
+        arr = np.asarray(vertices, dtype=np.float64)
+        rx_ant_index = int(candidate.get("rx_ant_index", 0))
+        tx_ant_index = int(candidate.get("tx_ant_index", 0))
+        if (
+            arr.ndim == 5
+            and arr.shape[-1] == 3
+            and 0 <= rx_ant_index < arr.shape[0]
+            and 0 <= tx_ant_index < arr.shape[1]
+            and 0 <= path_index < arr.shape[2]
+        ):
+            interactions = arr[rx_ant_index, tx_ant_index, path_index]
+            finite = np.all(np.isfinite(interactions), axis=1)
+            interactions = interactions[finite]
+            if interactions.size:
+                points.extend(interactions)
+    points.append(rx_pos)
+    polyline = np.asarray(points, dtype=np.float64)
+    if len(polyline) < 2 or not np.all(np.isfinite(polyline)):
+        return None
+    return polyline
+
+
+def _path_color(normalized_power: float) -> tuple[float, float, float, float]:
+    value = float(np.clip(normalized_power, 0.0, 1.0))
+    low = np.asarray([0.05, 0.35, 1.0], dtype=np.float64)
+    high = np.asarray([1.0, 0.08, 0.02], dtype=np.float64)
+    rgb = low * (1.0 - value) + high * value
+    return (float(rgb[0]), float(rgb[1]), float(rgb[2]), 0.35 + 0.55 * value)
 
 
 def _antenna_diagram_mesh(
@@ -1905,45 +2187,103 @@ def _antenna_diagram_mesh(
     pattern_name: str,
     color_bias: tuple[float, float, float] = (0.2, 0.5, 1.0),
     alpha_samples: int = 25,
-    beta_samples: int = 49,
+    beta_samples: int = 48,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    alpha_samples = max(int(alpha_samples), 5)
+    beta_samples = max(int(beta_samples), 8)
     alpha = np.linspace(0.0, np.pi, alpha_samples, dtype=np.float64)
-    beta = np.linspace(0.0, 2.0 * np.pi, beta_samples, dtype=np.float64)
-    aa, bb = np.meshgrid(alpha, beta, indexing="ij")
-    local_dirs = np.stack(
-        [
-            np.cos(aa),
-            np.sin(aa) * np.cos(bb),
-            np.sin(aa) * np.sin(bb),
-        ],
-        axis=-1,
-    )
-    gain_db = _antenna_normalized_gain_db(pattern_name, local_dirs)
-    gain_db = np.clip(gain_db, _ANTENNA_DIAGRAM_DB_FLOOR, 0.0)
-    normalized = (gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR)
-    radius = _ANTENNA_DIAGRAM_RADIUS_M * np.maximum(normalized, 0.04)
+    beta = np.linspace(0.0, 2.0 * np.pi, beta_samples, endpoint=False, dtype=np.float64)
     axes = _local_axes(orientation_rad)
-    world_dirs = (
-        local_dirs[..., 0, None] * axes["x"]
-        + local_dirs[..., 1, None] * axes["y"]
-        + local_dirs[..., 2, None] * axes["z"]
-    )
-    vertices = np.asarray(origin, dtype=np.float64) + world_dirs * radius[..., None]
+
+    vertices: list[np.ndarray] = []
+    normalized_values: list[float] = []
+    ring_indices: list[list[int]] = []
+    origin_arr = np.asarray(origin, dtype=np.float64)
+
+    for a_idx, a_value in enumerate(alpha):
+        if a_idx in {0, alpha_samples - 1}:
+            local_dir = np.asarray(
+                [np.cos(a_value), 0.0, np.sin(a_value)],
+                dtype=np.float64,
+            )
+            gain_db = _antenna_normalized_gain_db(pattern_name, local_dir.reshape(1, 3))[0]
+            gain_db = float(np.clip(gain_db, _ANTENNA_DIAGRAM_DB_FLOOR, 0.0))
+            normalized = float((gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR))
+            radius = _ANTENNA_DIAGRAM_RADIUS_M * max(normalized, 0.04)
+            world_dir = local_dir[0] * axes["x"] + local_dir[1] * axes["y"] + local_dir[2] * axes["z"]
+            vertices.append(origin_arr + world_dir * radius)
+            normalized_values.append(normalized)
+            ring_indices.append([len(vertices) - 1])
+            continue
+
+        ring = []
+        local_dirs = np.stack(
+            [
+                np.full_like(beta, np.cos(a_value)),
+                np.sin(a_value) * np.cos(beta),
+                np.sin(a_value) * np.sin(beta),
+            ],
+            axis=-1,
+        )
+        gain_db = _antenna_normalized_gain_db(pattern_name, local_dirs)
+        gain_db = np.clip(gain_db, _ANTENNA_DIAGRAM_DB_FLOOR, 0.0)
+        normalized_ring = (gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR)
+        radius = _ANTENNA_DIAGRAM_RADIUS_M * np.maximum(normalized_ring, 0.04)
+        world_dirs = (
+            local_dirs[:, 0, None] * axes["x"]
+            + local_dirs[:, 1, None] * axes["y"]
+            + local_dirs[:, 2, None] * axes["z"]
+        )
+        for b_idx in range(beta_samples):
+            vertices.append(origin_arr + world_dirs[b_idx] * radius[b_idx])
+            normalized_values.append(float(normalized_ring[b_idx]))
+            ring.append(len(vertices) - 1)
+        ring_indices.append(ring)
+
     faces = []
     colors = []
     for a_idx in range(alpha_samples - 1):
-        for b_idx in range(beta_samples - 1):
-            p0 = a_idx * beta_samples + b_idx
-            p1 = p0 + 1
-            p2 = p0 + beta_samples
-            p3 = p2 + 1
-            face_gain = float(np.mean(normalized[a_idx : a_idx + 2, b_idx : b_idx + 2]))
-            color = _antenna_diagram_color(face_gain, color_bias)
-            faces.append((p0, p2, p1))
-            colors.append(color)
-            faces.append((p1, p2, p3))
-            colors.append(color)
-    return vertices.reshape(-1, 3), np.asarray(faces, dtype=np.int32), np.asarray(colors, dtype=np.float32)
+        current = ring_indices[a_idx]
+        following = ring_indices[a_idx + 1]
+        if len(current) == 1:
+            pole = current[0]
+            for b_idx in range(beta_samples):
+                p1 = following[b_idx]
+                p2 = following[(b_idx + 1) % beta_samples]
+                _append_non_degenerate_antenna_face(faces, colors, vertices, normalized_values, (pole, p1, p2), color_bias)
+        elif len(following) == 1:
+            pole = following[0]
+            for b_idx in range(beta_samples):
+                p0 = current[b_idx]
+                p1 = current[(b_idx + 1) % beta_samples]
+                _append_non_degenerate_antenna_face(faces, colors, vertices, normalized_values, (p0, p1, pole), color_bias)
+        else:
+            for b_idx in range(beta_samples):
+                p0 = current[b_idx]
+                p1 = current[(b_idx + 1) % beta_samples]
+                p2 = following[b_idx]
+                p3 = following[(b_idx + 1) % beta_samples]
+                _append_non_degenerate_antenna_face(faces, colors, vertices, normalized_values, (p0, p2, p1), color_bias)
+                _append_non_degenerate_antenna_face(faces, colors, vertices, normalized_values, (p1, p2, p3), color_bias)
+
+    return np.asarray(vertices, dtype=np.float64), np.asarray(faces, dtype=np.int32), np.asarray(colors, dtype=np.float32)
+
+
+def _append_non_degenerate_antenna_face(
+    faces: list[tuple[int, int, int]],
+    colors: list[tuple[float, float, float, float]],
+    vertices: list[np.ndarray],
+    normalized_values: list[float],
+    face: tuple[int, int, int],
+    color_bias: tuple[float, float, float],
+) -> None:
+    p0, p1, p2 = (vertices[index] for index in face)
+    area = float(np.linalg.norm(np.cross(p1 - p0, p2 - p0)))
+    if area <= 1e-10:
+        return
+    faces.append(face)
+    face_gain = float(np.mean([normalized_values[index] for index in face]))
+    colors.append(_antenna_diagram_color(face_gain, color_bias))
 
 
 def _antenna_normalized_gain_db(pattern_name: str, local_dirs: np.ndarray) -> np.ndarray:
@@ -1956,6 +2296,10 @@ def _antenna_normalized_gain_db(pattern_name: str, local_dirs: np.ndarray) -> np
     z = local_dirs[..., 2]
     if spec.name == "iso":
         return np.zeros_like(x, dtype=np.float64)
+    if spec.name == POWERLOG_PATTERN:
+        return powerlog_normalized_gain_db_from_local_dirs(local_dirs)
+    if spec.name == QOM_OMNI_PATTERN:
+        return qom_omni_normalized_gain_db_from_local_dirs(local_dirs)
     if spec.name in {"dipole", "hw_dipole"}:
         field = np.clip(0.5 * (x + 1.0), 10.0 ** (_ANTENNA_DIAGRAM_DB_FLOOR / 20.0), 1.0)
         if spec.name == "hw_dipole":

@@ -10,7 +10,7 @@ from xml.etree import ElementTree
 
 import numpy as np
 
-from isac_6d_sampler.core.antenna_patterns import register_sionna_antenna_patterns
+from isac_6d_sampler.core.antenna_patterns import register_sionna_antenna_patterns, resolve_pattern_for_frequency
 from isac_6d_sampler.core.model import (
     BaseStation,
     ChannelMode,
@@ -71,12 +71,13 @@ class SionnaSimulator:
         frequency_vector = np.concatenate(subbands)
         with _scene_xml_with_configured_dynamic_objects(scene_design) as scene_path:
             scene = load_scene(str(scene_path), merge_shapes=request.sionna.merge_shapes)
-        scene.frequency = float(np.mean(frequency_vector))
+        representative_frequency_hz = float(np.mean(frequency_vector))
+        scene.frequency = representative_frequency_hz
         scene.bandwidth = float(frequency_vector[-1] - frequency_vector[0])
-        assign_calibrated_materials(scene, scene_design.name)
+        assign_calibrated_materials(scene, scene_design.name, representative_frequency_hz)
         self._add_external_object_meshes(scene, scene_design)
 
-        plan = build_simulation_plan(scene_design)
+        plan = build_simulation_plan(scene_design, include_ue_ue_links=request.sionna.ue_ue_links)
         result_frames: list[TimeframeResult] = []
         radiomap_link_cache: dict[tuple, LinkResult] = {}
         batch_size = max(1, int(request.sionna.batch_timeframes))
@@ -209,7 +210,7 @@ class SionnaSimulator:
             )
             rx_local = _local_device_index(batch.rx_devices, batch.refs, side="rx")
             tx_local = _local_device_index(batch.tx_devices, batch.refs, side="tx")
-            reciprocal_cache: dict[tuple[int, str, str], tuple[np.ndarray, np.ndarray | None, np.ndarray | None]] = {}
+            reciprocal_cache: dict[tuple[int, str, str], tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]] = {}
 
             try:
                 if progress is not None:
@@ -269,7 +270,7 @@ class SionnaSimulator:
                             rx_local_index=rx_local_index,
                             tx_local_index=tx_local_index,
                         )
-                    h, path_delays, path_coefficients = reciprocal_cache[cache_key]
+                    h, path_delays, path_coefficients, path_vertices = reciprocal_cache[cache_key]
                     if _link_uses_reverse_solver_direction(link):
                         h, path_delays, path_coefficients = _transpose_reciprocal_link_data(
                             h,
@@ -281,6 +282,8 @@ class SionnaSimulator:
                         metadata["path_delays_s"] = path_delays
                     if path_coefficients is not None:
                         metadata["path_coefficients"] = path_coefficients
+                    if path_vertices is not None:
+                        metadata["path_vertices"] = path_vertices
                     result_link = LinkResult(
                         rx_index=link.rx_index,
                         tx_index=link.tx_index,
@@ -309,7 +312,7 @@ class SionnaSimulator:
             num_cols=tx_panel.cols,
             vertical_spacing=_spacing_m_to_wavelengths(tx_panel.vertical_spacing_m, frequency_hz),
             horizontal_spacing=_spacing_m_to_wavelengths(tx_panel.horizontal_spacing_m, frequency_hz),
-            pattern=_sionna_array_pattern(tx_panel.pattern),
+            pattern=_sionna_array_pattern(tx_panel.pattern, frequency_hz),
             polarization=tx_panel.polarization,
         )
         scene.rx_array = planar_array_cls(
@@ -317,7 +320,7 @@ class SionnaSimulator:
             num_cols=rx_panel.cols,
             vertical_spacing=_spacing_m_to_wavelengths(rx_panel.vertical_spacing_m, frequency_hz),
             horizontal_spacing=_spacing_m_to_wavelengths(rx_panel.horizontal_spacing_m, frequency_hz),
-            pattern=_sionna_array_pattern(rx_panel.pattern),
+            pattern=_sionna_array_pattern(rx_panel.pattern, frequency_hz),
             polarization=rx_panel.polarization,
         )
 
@@ -500,15 +503,23 @@ def _paths_to_link_data(
     link: LinkPlan,
     rx_local_index: int = 0,
     tx_local_index: int = 0,
-) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
     if request.channel_mode == ChannelMode.FREQUENCY_DOMAIN:
         h = _paths_cfr_chunked(paths, np.asarray(paths.tau), frequency_vector)
         h = _slice_link_array(np.asarray(h), rx_local_index, tx_local_index)
         h = h * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
+        a, tau = paths.cir(normalize_delays=False, out_type="numpy")
+        delays = _slice_link_array(np.asarray(tau), rx_local_index, tx_local_index)
+        coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)
+        if coeffs.ndim > 0 and coeffs.shape[-1] == 1 and coeffs.ndim == delays.ndim + 1:
+            coeffs = np.squeeze(coeffs, axis=-1)
+        path_vertices = _extract_path_vertices_for_link(paths, rx_local_index, tx_local_index)
+        coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
         return (
             _reshape_h_for_reference(h, link).astype(np.complex64),
-            None,
-            None,
+            _reshape_path_delays_for_reference(delays, link).astype(np.float64),
+            _reshape_path_coefficients_for_reference(coeffs, link).astype(np.complex64),
+            path_vertices,
         )
 
     a, tau = paths.cir(normalize_delays=False, out_type="numpy")
@@ -516,12 +527,14 @@ def _paths_to_link_data(
     coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)
     if coeffs.ndim > 0 and coeffs.shape[-1] == 1 and coeffs.ndim == delays.ndim + 1:
         coeffs = np.squeeze(coeffs, axis=-1)
+    path_vertices = _extract_path_vertices_for_link(paths, rx_local_index, tx_local_index)
     coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
     h = render_channel_samples(delays, coeffs, frequency_vector, request.channel_mode)
     return (
         _reshape_h_for_reference(h, link).astype(np.complex64),
         _reshape_path_delays_for_reference(delays, link).astype(np.float64),
         _reshape_path_coefficients_for_reference(coeffs, link).astype(np.complex64),
+        path_vertices,
     )
 
 
@@ -570,8 +583,8 @@ def _vector3_for_mitsuba(values) -> list[float]:
     return [float(values[0]), float(values[1]), float(values[2])]
 
 
-def _sionna_array_pattern(pattern: str) -> str:
-    return pattern
+def _sionna_array_pattern(pattern: str, frequency_hz: float) -> str:
+    return resolve_pattern_for_frequency(pattern, frequency_hz)
 
 
 def _tx_is_only_monostatic_in_batch(
@@ -683,6 +696,86 @@ def _reshape_path_coefficients_for_reference(coeffs: np.ndarray, link: LinkPlan)
         1,
         path_count,
     )
+
+
+def _extract_path_vertices_for_link(paths, rx_local_index: int, tx_local_index: int) -> np.ndarray | None:
+    """Extract Sionna path interaction vertices for one logical RX/TX pair.
+
+    Returned shape is ``(rx_ant, tx_ant, path, depth, xyz)``. Keeping the
+    antenna dimensions is essential: Sionna assigns path indices separately
+    for every antenna pair when ``synthetic_array=False``. Flattening these
+    dimensions can associate a CIR delay with another path's geometry.
+
+    Entries whose interaction type is ``NONE`` are replaced by NaNs so that a
+    real interaction at the global origin is not confused with zero padding.
+    """
+    if not hasattr(paths, "vertices"):
+        return None
+    try:
+        vertices_value = paths.vertices
+        vertices = np.asarray(
+            vertices_value.numpy() if hasattr(vertices_value, "numpy") else vertices_value,
+            dtype=np.float32,
+        )
+        interactions_value = paths.interactions
+        interactions = np.asarray(
+            interactions_value.numpy() if hasattr(interactions_value, "numpy") else interactions_value,
+        )
+    except Exception:  # noqa: BLE001 - Sionna tensors can fail conversion for empty path sets
+        return None
+    if vertices.size == 0:
+        return None
+    if vertices.shape[-1] != 3 or interactions.shape != vertices.shape[:-1]:
+        return None
+
+    synthetic_array = bool(getattr(paths, "synthetic_array", False))
+    if synthetic_array:
+        # [depth, rx, tx, path, xyz]
+        if vertices.ndim != 5:
+            return None
+        sliced = vertices[:, rx_local_index, tx_local_index, :, :]
+        sliced_interactions = interactions[:, rx_local_index, tx_local_index, :]
+        sliced = sliced[:, None, None, :, :]
+        sliced_interactions = sliced_interactions[:, None, None, :]
+    else:
+        # [depth, rx, rx_ant, tx, tx_ant, path, xyz]
+        if vertices.ndim != 7:
+            return None
+        sliced = vertices[:, rx_local_index, :, tx_local_index, :, :, :]
+        sliced_interactions = interactions[:, rx_local_index, :, tx_local_index, :, :]
+
+    # [depth, rx_ant, tx_ant, path, xyz] ->
+    # [rx_ant, tx_ant, path, depth, xyz]
+    sliced = np.transpose(sliced, (1, 2, 3, 0, 4)).copy()
+    sliced_interactions = np.transpose(sliced_interactions, (1, 2, 3, 0))
+    sliced[sliced_interactions == 0] = np.nan
+    if not np.any(np.isfinite(sliced)):
+        # A valid LOS-only result legitimately has no interaction vertices.
+        return sliced
+    return sliced
+
+
+def _slice_vertices_link_array(vertices: np.ndarray, rx_index: int, tx_index: int) -> np.ndarray | None:
+    """Legacy helper retained for callers outside the simulation path cache."""
+    if vertices.ndim == 7:
+        sliced = vertices[:, rx_index, :, tx_index, :, :, :]
+        return np.transpose(sliced, (1, 2, 3, 0, 4)).copy()
+    if vertices.ndim == 5:
+        sliced = vertices[:, rx_index, tx_index, :, :]
+        return np.transpose(sliced[:, None, None, :, :], (1, 2, 3, 0, 4)).copy()
+    return None
+
+
+def _normalize_vertices_shape(values: np.ndarray) -> np.ndarray | None:
+    """Normalize legacy cached vertices to ``(rx_ant, tx_ant, path, depth, xyz)``."""
+    arr = np.asarray(values, dtype=np.float32)
+    if arr.ndim == 5 and arr.shape[-1] == 3:
+        return arr
+    if arr.ndim == 3 and arr.shape[-1] == 3:
+        return arr[None, None, :, :, :]
+    if arr.ndim == 2 and arr.shape[-1] == 3:
+        return arr[None, None, None, :, :]
+    return None
 
 
 def _build_link_batches(links: tuple[LinkPlan, ...], request_los: bool) -> list[LinkBatch]:

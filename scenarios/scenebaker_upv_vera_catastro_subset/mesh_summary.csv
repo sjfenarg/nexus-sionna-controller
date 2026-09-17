@@ -1,0 +1,7 @@
+mesh,vertices,faces,x_min,y_min,z_min,x_max,y_max,z_max
+map_osm_paths_cycleway.ply,10,8,-2.6284454,-197.99901,0.3,131.6932,-128.00471,0.3
+map_osm_paths_footway.ply,21,15,26.93861,-289.057,0.3,121.764534,-198.04086,0.3
+map_osm_roads_pedestrian.ply,22,20,-2.4284418,-227.7767,0.3,136.4796,-125.32264,0.3
+map_osm_roads_service.ply,27,21,-45.451572,-266.65588,0.3,130.03076,-123.96623,0.3
+catastro_buildingparts-wall.ply,446,587,-35.899044,-278.738,0.0,123.41081,-138.15132,21.0
+catastro_buildingparts-roof.ply,279,219,-35.899044,-278.738,3.0,123.41081,-138.15132,21.0

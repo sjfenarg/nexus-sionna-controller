@@ -1,0 +1,70 @@
+<?xml version='1.0' encoding='utf-8'?>
+<scene version="2.1.0">
+    <integrator type="path" id="elm__0" name="elm__0">
+        <integer name="max_depth" value="12" />
+    </integrator>
+    <bsdf type="itu-radio-material" id="mat-BRICKS">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-GRASS">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-GLASS">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-GRAVEL">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-GROUND">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-METAL">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-PLASTIC">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <bsdf type="itu-radio-material" id="mat-CONCRETE">
+        <string name="type" value="concrete" />
+        <float name="thickness" value="0.1" />
+    </bsdf>
+    <shape type="ply" id="BRICKS_obj" name="BRICKS_obj">
+        <string name="filename" value="meshes/BRICKS_Obj.ply" />
+        <ref id="mat-BRICKS" name="bsdf" />
+    </shape>
+    <shape type="ply" id="GRASS_obj" name="GRASS_obj">
+        <string name="filename" value="meshes/GRASS_Obj.ply" />
+        <ref id="mat-GRASS" name="bsdf" />
+    </shape>
+    <shape type="ply" id="GLASS_obj" name="GLASS_obj">
+        <string name="filename" value="meshes/GLASS_Obj.ply" />
+        <ref id="mat-GLASS" name="bsdf" />
+    </shape>
+    <shape type="ply" id="GRAVEL_obj" name="GRAVEL_obj">
+        <string name="filename" value="meshes/GRAVEL_Obj.ply" />
+        <ref id="mat-GRAVEL" name="bsdf" />
+    </shape>
+    <shape type="ply" id="GROUND_obj" name="GROUND_obj">
+        <string name="filename" value="meshes/GROUND_Obj.ply" />
+        <ref id="mat-GROUND" name="bsdf" />
+    </shape>
+    <shape type="ply" id="METAL_obj" name="METAL_obj">
+        <string name="filename" value="meshes/METAL_Obj.ply" />
+        <ref id="mat-METAL" name="bsdf" />
+    </shape>
+    <shape type="ply" id="PLASTIC_obj" name="PLASTIC_obj">
+        <string name="filename" value="meshes/PLASTIC_Obj.ply" />
+        <ref id="mat-PLASTIC" name="bsdf" />
+    </shape>
+    <shape type="ply" id="CONCRETE_obj" name="CONCRETE_obj">
+        <string name="filename" value="meshes/CONCRETE_Obj.ply" />
+        <ref id="mat-CONCRETE" name="bsdf" />
+    </shape>
+</scene>

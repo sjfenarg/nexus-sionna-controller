@@ -1,0 +1,3 @@
+mesh,vertices,faces,x_min,y_min,z_min,x_max,y_max,z_max
+catastro_buildingparts-wall.ply,446,587,-35.899044,-278.738,0.0,123.41081,-138.15132,21.0
+catastro_buildingparts-roof.ply,279,219,-35.899044,-278.738,3.0,123.41081,-138.15132,21.0

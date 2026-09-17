@@ -1,0 +1,2 @@
+anchored_scenario,tree_obj,dx_m,dy_m,dz_m,yaw_deg,scale,obj_axis_mapping,tree_local_origin,transform_order,tree_local_bounds_m
+scenarios\Detailed 6D Map\Detailed 6D Map.xml,docs\Tree_V10_Final.obj,72.88131100379002,-235.87687497852113,0.0,0.0,0.355,"OBJ x -> scene x, OBJ z -> scene y, OBJ y -> scene z",horizontal bounding-box center at trunk base/min height,"recenter OBJ to local base origin, scale, yaw around local vertical axis, then translate by dx/dy/dz in map coordinates","{'min': [-12.079883, -11.970288, 0.0], 'max': [12.079883, 11.970288, 19.753479]}"

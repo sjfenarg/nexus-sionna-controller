@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 pytest.importorskip("PySide6", reason="PySide6 is required for GUI tests")
 pytest.importorskip("pyqtgraph", reason="pyqtgraph is required for the 3D GUI")
@@ -21,6 +22,7 @@ from isac_6d_sampler.gui.scene_3d import (
     _plane_handle_points,
     _point_to_ray_distance,
     _pointing_vector,
+    _select_important_bs_to_ue_paths,
     _radiomap_corner_world_per_pixel,
     _screen_angle,
     _screen_pixels_to_world,
@@ -36,6 +38,50 @@ from isac_6d_sampler.gui.scene_3d import (
     _viewport_rect,
     _wrap_angle,
 )
+
+
+def test_path_range_filter_uses_matching_geometry_and_rejects_false_los():
+    speed_of_light = 299_792_458.0
+    delays = np.asarray([[[[[[78.0 / speed_of_light]]]]]], dtype=np.float64)
+    coefficients = np.ones_like(delays, dtype=np.complex64)
+    bounce_y = np.sqrt(39.0**2 - 20.0**2)
+    vertices = np.full((1, 1, 1, 3, 3), np.nan, dtype=np.float32)
+    vertices[0, 0, 0, 0] = [20.0, bounce_y, 0.0]
+    link = SimpleNamespace(
+        tx_id="bs0",
+        rx_id="ue0",
+        metadata={
+            "path_delays_s": delays,
+            "path_coefficients": coefficients,
+            "path_vertices": vertices,
+        },
+    )
+
+    selected, stats = _select_important_bs_to_ue_paths(
+        [link],
+        {"bs0": (0.0, 0.0, 0.0), "ue0": (40.0, 0.0, 0.0)},
+        max_paths=10,
+        min_delay_separation_s=2e-9,
+        min_range_m=77.0,
+        max_range_m=80.0,
+    )
+
+    assert len(selected) == 1
+    assert stats["paths_rejected_geometry_mismatch"] == 0
+    assert np.linalg.norm(np.diff(selected[0]["points"], axis=0), axis=1).sum() == pytest.approx(78.0)
+
+    link.metadata["path_vertices"] = np.full_like(vertices, np.nan)
+    selected, stats = _select_important_bs_to_ue_paths(
+        [link],
+        {"bs0": (0.0, 0.0, 0.0), "ue0": (40.0, 0.0, 0.0)},
+        max_paths=10,
+        min_delay_separation_s=2e-9,
+        min_range_m=77.0,
+        max_range_m=80.0,
+    )
+
+    assert selected == []
+    assert stats["paths_rejected_geometry_mismatch"] == 1
 
 
 def test_intersect_ray_plane_returns_world_point():

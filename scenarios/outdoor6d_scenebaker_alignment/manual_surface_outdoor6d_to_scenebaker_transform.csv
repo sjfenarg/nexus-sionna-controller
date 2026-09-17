@@ -1,0 +1,2 @@
+anchored_scenario,moved_scenario,dx_m,dy_m,dz_m,rotation_deg,scale_xy,rotation_center_x,rotation_center_y,transform_order
+scenarios\scenebaker_upv_vera_catastro_subset\upv_vera_catastro_subset_no_trees_no_lidar.xml,scenarios\Outdoor6D_w_car.xml,40.85000000000002,-219.75,0.0,-20.25999999999999,0.976,3.8251953125,-6.196485500335328,"scale Outdoor6D about rotation_center, rotate about rotation_center, then add dx/dy"

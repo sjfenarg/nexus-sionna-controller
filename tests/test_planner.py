@@ -92,6 +92,7 @@ def test_plan_timeframes_follow_trajectory_orientation_points():
 def test_curve_plan_orientation_follows_tangent_direction():
     ue = UserEquipment(
         id="ue0",
+        orientation_rad=(0.2, 0.3, 1.4),
         trajectory=TrajectorySpec(
             kind="curve",
             points=[(0.0, 0.0, 1.5), (0.0, 10.0, 1.5)],
@@ -109,8 +110,8 @@ def test_curve_plan_orientation_follows_tangent_direction():
 
     plan = build_simulation_plan(scene)
 
-    assert orientation_for(ue, plan.timeframes[0]) == pytest.approx((np.pi / 2.0, 0.0, 0.0))
-    assert orientation_for(ue, plan.timeframes[-1]) == pytest.approx((np.pi / 2.0, 0.0, 0.0))
+    assert orientation_for(ue, plan.timeframes[0]) == pytest.approx((np.pi / 2.0, 0.3, 1.4))
+    assert orientation_for(ue, plan.timeframes[-1]) == pytest.approx((np.pi / 2.0, 0.3, 1.4))
 
 
 def test_radiomap_plan_materializes_xy_grid_as_timeframes():

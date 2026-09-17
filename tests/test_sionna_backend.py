@@ -29,6 +29,7 @@ from isac_6d_sampler.sim.sionna_backend import (
     _build_timeframe_link_batches,
     _configure_mitsuba_variant,
     _external_object_mesh_paths,
+    _extract_path_vertices_for_link,
     _last_completed_timeframe_index,
     _next_batchable_timeframe_chunk,
     _offset_monostatic_tx_position,
@@ -400,7 +401,7 @@ def test_paths_cfr_chunked_splits_large_frequency_vectors():
     np.testing.assert_allclose(h[0, 0, 0, 0, 0], frequencies)
 
 
-def test_frequency_domain_link_data_uses_sionna_cfr_without_cir():
+def test_frequency_domain_link_data_uses_cfr_and_caches_cir_for_path_viewer():
     request = SimulationRequest()
     request.channel_mode = ChannelMode.FREQUENCY_DOMAIN
     request.sionna.tx_power_dbm = 0.0
@@ -409,7 +410,7 @@ def test_frequency_domain_link_data_uses_sionna_cfr_without_cir():
     link = LinkPlan(rx_index=0, tx_index=1, rx=ue, tx=bs)
     paths = _FakeCfrOnlyPaths()
 
-    h, path_delays, path_coefficients = _paths_to_link_data(
+    h, path_delays, path_coefficients, path_vertices = _paths_to_link_data(
         paths,
         np.asarray([77e9, 78e9], dtype=np.float64),
         request,
@@ -417,8 +418,9 @@ def test_frequency_domain_link_data_uses_sionna_cfr_without_cir():
     )
 
     assert h.shape == (1, 1, 10, 10, 1, 2)
-    assert path_delays is None
-    assert path_coefficients is None
+    assert path_delays.shape == (1, 1, 10, 10, 1, 1)
+    assert path_coefficients.shape == (1, 1, 10, 10, 1, 1)
+    assert path_vertices is None
     assert paths.cfr_kwargs["normalize_delays"] is False
     assert paths.cfr_kwargs["normalize"] is False
 
@@ -459,8 +461,8 @@ def test_monostatic_tx_position_is_offset_by_quarter_wavelength():
 
 
 def test_journal_horn_pattern_is_passed_to_sionna_element_pattern_registry():
-    assert _sionna_array_pattern("isac_horn_77_81") == "isac_horn_77_81"
-    assert _sionna_array_pattern("dipole") == "dipole"
+    assert _sionna_array_pattern("isac_horn_77_81", 79e9) == "isac_horn_77_81"
+    assert _sionna_array_pattern("dipole", 79e9) == "dipole"
 
 
 def test_horn_links_keep_planned_orientation_without_look_at_override(monkeypatch):
@@ -475,6 +477,7 @@ def test_horn_links_keep_planned_orientation_without_look_at_override(monkeypatc
             np.zeros((1, 1, 1, 1, 1, 2), dtype=np.complex64),
             np.zeros((1, 1, 1, 1, 1, 1), dtype=np.float64),
             np.zeros((1, 1, 1, 1, 1, 1), dtype=np.complex64),
+            None,
         )
 
     monkeypatch.setattr(
@@ -775,12 +778,32 @@ class _FakeCfrOnlyPaths:
         self.cfr_kwargs = None
 
     def cir(self, **_kwargs):
-        raise AssertionError("frequency_domain must not request CIR paths")
+        tau = np.zeros((1, 1, 1, 100, 1), dtype=np.float64)
+        coefficients = np.ones((1, 1, 1, 100, 1, 1), dtype=np.complex64)
+        return coefficients, tau
 
     def cfr(self, frequencies, **kwargs):
         self.cfr_kwargs = kwargs
         frequencies = np.asarray(frequencies, dtype=np.float64)
         return np.ones((1, 1, 1, 100, frequencies.size), dtype=np.complex64)
+
+
+def test_path_vertex_extraction_preserves_antenna_and_path_indices():
+    vertices = np.zeros((3, 1, 1, 1, 2, 2, 3), dtype=np.float32)
+    interactions = np.zeros((3, 1, 1, 1, 2, 2), dtype=np.int32)
+    vertices[0, 0, 0, 0, 1, 1] = [12.0, 3.0, 1.0]
+    interactions[0, 0, 0, 0, 1, 1] = 1
+    paths = types.SimpleNamespace(
+        vertices=vertices,
+        interactions=interactions,
+        synthetic_array=False,
+    )
+
+    extracted = _extract_path_vertices_for_link(paths, 0, 0)
+
+    assert extracted.shape == (1, 2, 2, 3, 3)
+    np.testing.assert_allclose(extracted[0, 1, 1, 0], [12.0, 3.0, 1.0])
+    assert np.isnan(extracted[0, 0, 0]).all()
 
 
 class _FakePlanarArray:

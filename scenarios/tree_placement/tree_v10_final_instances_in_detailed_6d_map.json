@@ -1,0 +1,31 @@
+{
+  "scenario": "scenarios\\Detailed 6D Map\\Detailed 6D Map.xml",
+  "instances": [
+    {
+      "id": "TREE_V10_Final_00",
+      "x_m": 72.88131100379002,
+      "y_m": -235.87687497852113,
+      "z_m": 0.0,
+      "yaw_deg": 0.0,
+      "scale": 0.355,
+      "height_m": 7.012485045
+    },
+    {
+      "id": "TREE_V10_Final_01",
+      "x_m": 74.88131100379002,
+      "y_m": -234.37687497852113,
+      "z_m": 0.0,
+      "yaw_deg": 0.0,
+      "scale": 0.355,
+      "height_m": 7.012485045
+    }
+  ],
+  "tree_material": {
+    "relative_permittivity": 8.0,
+    "conductivity_s_per_m": 25.0,
+    "thickness_m": 1.0,
+    "scattering_coefficient": 0.01,
+    "xpd_coefficient": 0.0,
+    "intent": "high-loss vegetation absorber with very low diffuse scattering"
+  }
+}

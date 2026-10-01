@@ -504,8 +504,13 @@ def _paths_to_link_data(
     rx_local_index: int = 0,
     tx_local_index: int = 0,
 ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    # Sionna cir() coefficients already contain the carrier phase. Its cfr()
+    # frequencies (and our CIR renderer frequencies) are offsets from that carrier.
+    baseband_frequencies = np.asarray(frequency_vector, dtype=np.float64) - float(
+        np.mean(frequency_vector)
+    )
     if request.channel_mode == ChannelMode.FREQUENCY_DOMAIN:
-        h = _paths_cfr_chunked(paths, np.asarray(paths.tau), frequency_vector)
+        h = _paths_cfr_chunked(paths, np.asarray(paths.tau), baseband_frequencies)
         h = _slice_link_array(np.asarray(h), rx_local_index, tx_local_index)
         h = h * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
         a, tau = paths.cir(normalize_delays=False, out_type="numpy")
@@ -529,7 +534,7 @@ def _paths_to_link_data(
         coeffs = np.squeeze(coeffs, axis=-1)
     path_vertices = _extract_path_vertices_for_link(paths, rx_local_index, tx_local_index)
     coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
-    h = render_channel_samples(delays, coeffs, frequency_vector, request.channel_mode)
+    h = render_channel_samples(delays, coeffs, baseband_frequencies, request.channel_mode)
     return (
         _reshape_h_for_reference(h, link).astype(np.complex64),
         _reshape_path_delays_for_reference(delays, link).astype(np.float64),

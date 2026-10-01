@@ -10,6 +10,7 @@ import numpy as np
 
 from isac_6d_sampler.core.antenna_patterns import antenna_pattern_spec
 from isac_6d_sampler.core.model import AntennaPanel, ChannelMode, SimulationRequest, TrajectorySpec
+from isac_6d_sampler.core.sensing_targets import sensing_options, sensing_target_dimensions, sensing_target_type
 from isac_6d_sampler.core.trajectories import sample_radiomap_grid
 from isac_6d_sampler.sim.channel import IFFT_GRIDDED_DELAY_OVERSAMPLING
 from isac_6d_sampler.sim.materials import (
@@ -101,14 +102,34 @@ class ReferenceH5Writer:
             obj_group = objects.require_group(f"object{idx}")
             obj_group.attrs["id"] = obj.id
             obj_group.attrs["object_name"] = obj.object_name
-            material = material_spec_for_object_name(obj.object_name)
+            # 3GPP sensing targets are absorbers: their response comes from scattering points only.
+            material = None if sensing_target_type(obj.object_name) else material_spec_for_object_name(obj.object_name)
             if material is not None:
                 obj_group.attrs["material_prefix"] = material.object_prefix
                 obj_group.attrs["material_name"] = material.name
             _replace_dataset(obj_group, "position", np.asarray(obj.position, dtype=np.float64))
             _replace_dataset(obj_group, "orientation", np.asarray(obj.orientation_rad, dtype=np.float64))
+            self._write_sensing_target_params(obj_group, obj)
         self._write_trajectory_params(params, request, user_equipments)
         self._write_radiomap_params(params, request, user_equipments)
+
+    def _write_sensing_target_params(self, obj_group, obj) -> None:
+        target = sensing_target_type(obj.object_name)
+        obj_group.attrs["sensing_target"] = target is not None
+        if target is None:
+            return
+        options = sensing_options(obj)
+        obj_group.attrs["sensing_model"] = "3GPP TR 38.901 clause 7.9.2"
+        obj_group.attrs["tr38901_object_type"] = target.object_type
+        obj_group.attrs["tr38901_model_type"] = int(options.model_type)
+        obj_group.attrs["random_sigma_s"] = bool(options.random_sigma_s)
+        obj_group.attrs["random_phases"] = bool(options.random_phases)
+        obj_group.attrs["random_xpr"] = bool(options.random_xpr)
+        if options.mesh:
+            obj_group.attrs["mesh"] = options.mesh
+        dimensions = sensing_target_dimensions(obj)
+        if dimensions is not None:
+            _replace_dataset(obj_group, "dimensions_lwh", np.asarray(dimensions, dtype=np.float64))
 
     def _write_frequency_bands(self, params, request: SimulationRequest) -> None:
         bands = params.require_group("frequency_bands")
@@ -318,11 +339,13 @@ class ReferenceH5Writer:
             h_group = tf_group.require_group("h")
             tau_group = tf_group.require_group("tau") if write_path_metadata else None
             a_group = tf_group.require_group("a") if write_path_metadata else None
+            sensing_group = None
             timestamp_group = tf_group.require_group("timestamps")
             self._write_timeframe_attrs(tf_group, timeframe.metadata)
             tf_group.require_group("parameters").attrs["n_channels"] = len(timeframe.links)
             self._write_timeframe_positions(tf_group, timeframe.metadata)
             self._write_timeframe_orientations(tf_group, timeframe.metadata)
+            self._write_timeframe_velocities(tf_group, timeframe.metadata)
             for link in timeframe.links:
                 name = f"rx{link.rx_index}_tx{link.tx_index}"
                 h_dataset = _replace_dataset(
@@ -352,6 +375,16 @@ class ReferenceH5Writer:
                         compression_opts=4,
                     )
                     _write_link_dataset_attrs(a_dataset, link, "path_coefficient", sample_axis="path_index")
+                if write_path_metadata and "path_is_sensing" in link.metadata:
+                    sensing_group = sensing_group or tf_group.require_group("path_is_sensing")
+                    sensing_dataset = _replace_dataset(
+                        sensing_group,
+                        name,
+                        np.asarray(link.metadata["path_is_sensing"], dtype=bool),
+                        compression="gzip",
+                        compression_opts=4,
+                    )
+                    _write_link_dataset_attrs(sensing_dataset, link, "path_is_sensing", sample_axis="path_index")
                 timestamp_shape = np.asarray(link.h).shape[:-1]
                 timestamp = link.timestamp or datetime.now(timezone.utc).isoformat()
                 timestamp_data = np.full(timestamp_shape, timestamp, dtype=object)
@@ -364,6 +397,7 @@ class ReferenceH5Writer:
             "object_positions",
             "device_orientations",
             "object_orientations",
+            "object_velocities",
         }
         for key, value in metadata.items():
             if key not in structured_keys:
@@ -388,6 +422,16 @@ class ReferenceH5Writer:
             group = orientations_group.require_group(group_name)
             for entity_id, orientation in values.items():
                 _replace_dataset(group, entity_id, np.asarray(orientation, dtype=np.float64))
+
+
+    def _write_timeframe_velocities(self, tf_group, metadata: dict) -> None:
+        velocities = metadata.get("object_velocities")
+        if not velocities:
+            return
+        group = tf_group.require_group("velocities").require_group("objects")
+        group.attrs["units"] = "m/s"
+        for entity_id, velocity in velocities.items():
+            _replace_dataset(group, entity_id, np.asarray(velocity, dtype=np.float64))
 
 
 def default_output_path(request: SimulationRequest, now: datetime | None = None) -> Path:

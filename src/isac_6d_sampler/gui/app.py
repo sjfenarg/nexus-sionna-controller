@@ -24,6 +24,7 @@ from isac_6d_sampler.core.model import (
     UserEquipment,
 )
 from isac_6d_sampler.core.scenarios import discover_scenarios, load_scenario_asset
+from isac_6d_sampler.core.sensing_targets import SENSING_TARGET_NAMES, is_sensing_target, sensing_target_type
 from isac_6d_sampler.core.trajectory_specs import (
     anchor_trajectory,
     build_trajectory_spec,
@@ -527,7 +528,9 @@ def main() -> int:
             object_name = self.object_name.currentText() or "CAR_obj"
             prefix = object_name.split("_", maxsplit=1)[0].lower() or "object"
             orientation = (self.yaw.value(), self.pitch.value(), self.roll.value())
-            position = (0.0, 0.0, 0.75)
+            target = sensing_target_type(object_name)
+            # Sionna places objects by their bounding-box center: rest 3GPP targets on the ground.
+            position = (0.0, 0.0, target.dimensions_m[2] / 2.0 if target is not None else 0.75)
             obj = DynamicObject(
                 id=unique_entity_id(prefix, self._existing_entity_ids()),
                 object_name=object_name,
@@ -618,6 +621,7 @@ def main() -> int:
             names = list(dict.fromkeys(names))
             if not names:
                 names = [DYNAMIC_SCENE_OBJECT_NAMES[0]]
+            names.extend(name for name in SENSING_TARGET_NAMES if name not in names)
             self.object_name.addItems(names)
             if current:
                 index = self.object_name.findText(current)
@@ -1110,6 +1114,8 @@ def main() -> int:
             elif isinstance(entity, DynamicObject):
                 source_orientations = entity.trajectory.orientation_rad_points
                 entity.object_name = self.object_name.currentText() or entity.object_name
+                if not is_sensing_target(entity):
+                    entity.sensing = None
                 entity.trajectory = anchor_trajectory(
                     self._trajectory_from_controls(default_position=entity.position),
                     entity.position,

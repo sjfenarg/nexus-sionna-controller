@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 from typing import Callable
+import warnings
 from xml.etree import ElementTree
 
 import numpy as np
@@ -19,6 +20,15 @@ from isac_6d_sampler.core.model import (
     SimulationRequest,
     UserEquipment,
 )
+from isac_6d_sampler.core.scenarios import object_mesh_path
+from isac_6d_sampler.core.sensing_targets import (
+    TR38901_VALID_FREQUENCY_RANGE_HZ,
+    frequency_in_tr38901_range,
+    is_sensing_target,
+    sensing_options,
+    sensing_target_dimensions,
+    sensing_target_type,
+)
 from isac_6d_sampler.core.validation import validate_request
 from isac_6d_sampler.sim.channel import render_channel_samples
 from isac_6d_sampler.sim.power import dbm_to_watt, field_amplitude_from_dbm
@@ -29,6 +39,8 @@ from .results import LinkResult, SimulationResult, TimeframeResult
 
 ProgressCallback = Callable[[int, int, str], None]
 JOURNAL_HORN_PATTERN = "isac_horn_77_81"
+# sionna.rt.constants.InteractionType.SENSING (bit flag, Sionna RT >= 2.2)
+SENSING_INTERACTION = 1 << 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +88,12 @@ class SionnaSimulator:
         scene.bandwidth = float(frequency_vector[-1] - frequency_vector[0])
         assign_calibrated_materials(scene, scene_design.name, representative_frequency_hz)
         self._add_external_object_meshes(scene, scene_design)
+        sensing_target_ids = self._add_sensing_targets(scene, scene_design)
+        sensing_metadata = _sensing_metadata(
+            sensing_target_ids,
+            request.sionna.sensing_channel,
+            frequency_vector,
+        )
 
         plan = build_simulation_plan(scene_design, include_ue_ue_links=request.sionna.ue_ue_links)
         result_frames: list[TimeframeResult] = []
@@ -120,6 +138,7 @@ class SionnaSimulator:
                 "mitsuba_variant": mitsuba_variant,
                 "tx_power_dbm": float(request.sionna.tx_power_dbm),
                 "tx_power_w": dbm_to_watt(request.sionna.tx_power_dbm),
+                **sensing_metadata,
             },
         )
 
@@ -154,6 +173,11 @@ class SionnaSimulator:
                     "object_positions": timeframe.object_positions,
                     "device_orientations": timeframe.device_orientations,
                     "object_orientations": timeframe.object_orientations,
+                    **(
+                        {"object_velocities": timeframe.object_velocities}
+                        if timeframe.object_velocities
+                        else {}
+                    ),
                 },
             )
             for offset, timeframe in enumerate(timeframes)
@@ -190,6 +214,7 @@ class SionnaSimulator:
         register_sionna_antenna_patterns()
         frame_links: list[list[LinkResult]] = [[] for _ in timeframes]
         solver = PathSolver()
+        rcs_solver = _rcs_solver_for_scene(scene, request)
 
         batches = _build_timeframe_link_batches(timeframes, start_index, request.sionna.los)
         for batch_index, batch in enumerate(batches):
@@ -210,7 +235,7 @@ class SionnaSimulator:
             )
             rx_local = _local_device_index(batch.rx_devices, batch.refs, side="rx")
             tx_local = _local_device_index(batch.tx_devices, batch.refs, side="tx")
-            reciprocal_cache: dict[tuple[int, str, str], tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]] = {}
+            reciprocal_cache: dict[tuple[int, str, str], tuple[tuple, np.ndarray | None]] = {}
 
             try:
                 if progress is not None:
@@ -242,18 +267,7 @@ class SionnaSimulator:
                     scene.add(receiver)
                     cleanup_names.append(rx_name)
 
-                paths = solver(
-                    scene=scene,
-                    samples_per_src=request.sionna.samples_per_src,
-                    max_num_paths_per_src=request.sionna.max_num_paths_per_src or 1_000_000,
-                    max_depth=request.sionna.max_depth,
-                    los=batch.los,
-                    specular_reflection=request.sionna.specular_reflection,
-                    diffuse_reflection=request.sionna.diffuse_reflection,
-                    refraction=request.sionna.refraction,
-                    synthetic_array=request.sionna.synthetic_array,
-                    seed=request.sionna.seed if request.sionna.seed is not None else 42,
-                )
+                paths = _solve_paths(scene, solver, rcs_solver, request, los=batch.los)
                 for ref in batch.refs:
                     link = ref.link
                     solver_rx = _solver_rx_device(link)
@@ -262,21 +276,33 @@ class SionnaSimulator:
                     tx_local_index = tx_local[(ref.timeframe_index, solver_tx.id)]
                     cache_key = (ref.timeframe_index, solver_rx.id, solver_tx.id)
                     if cache_key not in reciprocal_cache:
-                        reciprocal_cache[cache_key] = _paths_to_link_data(
-                            paths,
-                            f_vector,
-                            request,
-                            _solver_link(link),
-                            rx_local_index=rx_local_index,
-                            tx_local_index=tx_local_index,
+                        reciprocal_cache[cache_key] = (
+                            _paths_to_link_data(
+                                paths,
+                                f_vector,
+                                request,
+                                _solver_link(link),
+                                rx_local_index=rx_local_index,
+                                tx_local_index=tx_local_index,
+                            ),
+                            _sensing_path_mask_for_link(
+                                paths,
+                                _solver_link(link),
+                                rx_local_index=rx_local_index,
+                                tx_local_index=tx_local_index,
+                            )
+                            if rcs_solver is not None
+                            else None,
                         )
-                    h, path_delays, path_coefficients, path_vertices = reciprocal_cache[cache_key]
+                    (h, path_delays, path_coefficients, path_vertices), sensing_mask = reciprocal_cache[cache_key]
                     if _link_uses_reverse_solver_direction(link):
                         h, path_delays, path_coefficients = _transpose_reciprocal_link_data(
                             h,
                             path_delays,
                             path_coefficients,
                         )
+                        if sensing_mask is not None:
+                            sensing_mask = _transpose_rx_tx_axes(sensing_mask)
                     metadata = {}
                     if path_delays is not None:
                         metadata["path_delays_s"] = path_delays
@@ -284,6 +310,8 @@ class SionnaSimulator:
                         metadata["path_coefficients"] = path_coefficients
                     if path_vertices is not None:
                         metadata["path_vertices"] = path_vertices
+                    if sensing_mask is not None:
+                        metadata["path_is_sensing"] = sensing_mask
                     result_link = LinkResult(
                         rx_index=link.rx_index,
                         tx_index=link.tx_index,
@@ -334,6 +362,10 @@ class SionnaSimulator:
                 scene.objects[scene_object_name].orientation = _vector3_for_mitsuba(
                     timeframe.object_orientations.get(obj.id, obj.orientation_rad)
                 )
+                if obj.id in timeframe.object_velocities:
+                    scene.objects[scene_object_name].velocity = _vector3_for_mitsuba(
+                        timeframe.object_velocities[obj.id]
+                    )
 
     def _add_external_object_meshes(self, scene, design) -> None:
         object_meshes = _external_object_mesh_paths(design)
@@ -357,6 +389,116 @@ class SionnaSimulator:
                 )
             )
         scene.edit(add=scene_objects)
+
+    def _add_sensing_targets(self, scene, design) -> list[str]:
+        """Add the 3GPP TR 38.901 sensing targets (``HUMAN_3GPP``, ``CAR_3GPP``, ...)."""
+        objects = [obj for obj in design.objects if is_sensing_target(obj)]
+        if not objects:
+            return []
+        from sionna.rt.rcs import TR38901SensingTarget
+
+        objects_root = Path(design.scenario_path).parent / "objects"
+        targets = []
+        for obj in objects:
+            options = sensing_options(obj)
+            geometry: dict[str, object] = {}
+            if options.mesh:
+                mesh_path = object_mesh_path(objects_root, options.mesh)
+                if mesh_path is None:
+                    raise ValueError(f"Sensing target mesh '{options.mesh}' not found in {objects_root}")
+                geometry["fname"] = str(mesh_path)
+            else:
+                # Always explicit, so the catalog (not Sionna's defaults) defines the size.
+                geometry.update(zip(("length", "width", "height"), sensing_target_dimensions(obj)))
+            targets.append(
+                TR38901SensingTarget(
+                    name=obj.id,
+                    object_type=sensing_target_type(obj.object_name).object_type,
+                    model_type=options.model_type,
+                    position=_vector3_for_mitsuba(obj.position),
+                    orientation=_vector3_for_mitsuba(obj.orientation_rad),
+                    random_sigma_s=options.random_sigma_s,
+                    random_phases=options.random_phases,
+                    random_xpr=options.random_xpr,
+                    **geometry,
+                )
+            )
+        scene.add(targets)
+        return [obj.id for obj in objects]
+
+
+def _rcs_solver_for_scene(scene, request: SimulationRequest):
+    """Return an ``RCSSolver`` when the scene has sensing targets that should be solved."""
+    if request.sionna.sensing_channel == "background_only":
+        return None
+    if not getattr(scene, "sensing_targets", None):
+        return None
+    from sionna.rt.rcs import RCSSolver
+
+    return RCSSolver()
+
+
+def _solve_paths(scene, path_solver, rcs_solver, request: SimulationRequest, *, los: bool):
+    """Background paths (PathSolver) plus paths scattered by sensing targets (RCSSolver).
+
+    Sensing targets are absorbers for the PathSolver, so the two path sets are
+    disjoint and concatenating them gives the full channel.
+    """
+    seed = request.sionna.seed if request.sionna.seed is not None else 42
+    background = None
+    if rcs_solver is None or request.sionna.sensing_channel != "sensing_only":
+        background = path_solver(
+            scene=scene,
+            samples_per_src=request.sionna.samples_per_src,
+            max_num_paths_per_src=request.sionna.max_num_paths_per_src or 1_000_000,
+            max_depth=request.sionna.max_depth,
+            los=los,
+            specular_reflection=request.sionna.specular_reflection,
+            diffuse_reflection=request.sionna.diffuse_reflection,
+            refraction=request.sionna.refraction,
+            synthetic_array=request.sionna.synthetic_array,
+            seed=seed,
+        )
+    if rcs_solver is None:
+        return background
+    sensing = rcs_solver(
+        scene=scene,
+        # Counts the scattering event, so each leg gets ``max_depth - 1`` bounces.
+        max_depth=max(1, request.sionna.rcs_max_depth or request.sionna.max_depth),
+        buffer_size_per_sp=request.sionna.rcs_buffer_size_per_sp,
+        samples_per_sp=request.sionna.rcs_samples_per_sp,
+        synthetic_array=request.sionna.synthetic_array,
+        # ``los`` means unobstructed legs here, not the direct TX-RX path that
+        # the background solve drops for monostatic links: always keep it.
+        los=True,
+        specular_reflection=request.sionna.specular_reflection,
+        refraction=request.sionna.refraction,
+        seed=seed,
+    )
+    if background is None:
+        return sensing
+    return background.concat(sensing)
+
+
+def _sensing_metadata(target_ids: list[str], sensing_channel: str, frequency_vector: np.ndarray) -> dict:
+    if not target_ids:
+        return {}
+    f_min = float(np.min(frequency_vector))
+    f_max = float(np.max(frequency_vector))
+    in_range = frequency_in_tr38901_range(f_min) and frequency_in_tr38901_range(f_max)
+    if not in_range:
+        low, high = TR38901_VALID_FREQUENCY_RANGE_HZ
+        warnings.warn(
+            f"3GPP TR 38.901 sensing targets are specified for {low / 1e9:g}-{high / 1e9:g} GHz; "
+            f"the simulated band {f_min / 1e9:g}-{f_max / 1e9:g} GHz is outside that range",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return {
+        "sensing_targets": ",".join(target_ids),
+        "sensing_channel": sensing_channel,
+        "tr38901_frequency_in_range": in_range,
+    }
 
 
 @contextmanager
@@ -419,7 +561,7 @@ def _external_object_mesh_paths(design) -> list[tuple[object, Path]]:
     objects_root = Path(design.scenario_path).parent / "objects"
     resolved = []
     for obj in design.objects:
-        if obj.object_name in DYNAMIC_SCENE_OBJECT_NAMES:
+        if obj.object_name in DYNAMIC_SCENE_OBJECT_NAMES or is_sensing_target(obj):
             continue
         path = _object_mesh_path(objects_root, obj.object_name)
         if path is not None:
@@ -428,18 +570,7 @@ def _external_object_mesh_paths(design) -> list[tuple[object, Path]]:
 
 
 def _object_mesh_path(objects_root: Path, object_name: str) -> Path | None:
-    object_name = str(object_name)
-    candidates = []
-    raw_path = Path(object_name)
-    if raw_path.suffix.lower() == ".obj":
-        candidates.append(raw_path if raw_path.is_absolute() else objects_root / raw_path)
-    else:
-        candidates.append(objects_root / f"{object_name}.obj")
-    candidates.append(objects_root / object_name)
-    for candidate in candidates:
-        if candidate.exists() and candidate.suffix.lower() == ".obj":
-            return candidate
-    return None
+    return object_mesh_path(objects_root, object_name)
 
 
 def _scene_object_name_for_dynamic_object(scene, obj) -> str | None:
@@ -478,6 +609,7 @@ def _radiomap_bs_monostatic_cache_key(ref: TimeframeLinkRef) -> tuple | None:
         _rounded_vector(orientation_for(link.rx, ref.timeframe)),
         tuple(sorted((key, _rounded_vector(value)) for key, value in ref.timeframe.object_positions.items())),
         tuple(sorted((key, _rounded_vector(value)) for key, value in ref.timeframe.object_orientations.items())),
+        tuple(sorted((key, _rounded_vector(value)) for key, value in ref.timeframe.object_velocities.items())),
     )
 
 
@@ -760,6 +892,23 @@ def _extract_path_vertices_for_link(paths, rx_local_index: int, tx_local_index: 
     return sliced
 
 
+def _sensing_path_mask_for_link(paths, link: LinkPlan, rx_local_index: int, tx_local_index: int) -> np.ndarray | None:
+    """Boolean mask, laid out like the path delays, of paths scattered by a sensing target."""
+    try:
+        interactions_value = paths.interactions
+        interactions = np.asarray(
+            interactions_value.numpy() if hasattr(interactions_value, "numpy") else interactions_value,
+        )
+    except Exception:  # noqa: BLE001 - Sionna tensors can fail conversion for empty path sets
+        return None
+    if interactions.size == 0:
+        return None
+    # [depth, *tau_shape] -> tau_shape
+    mask = np.any((interactions.astype(np.int64) & SENSING_INTERACTION) != 0, axis=0)
+    mask = _slice_link_array(mask, rx_local_index, tx_local_index)
+    return _reshape_path_delays_for_reference(mask, link)
+
+
 def _slice_vertices_link_array(vertices: np.ndarray, rx_index: int, tx_index: int) -> np.ndarray | None:
     """Legacy helper retained for callers outside the simulation path cache."""
     if vertices.ndim == 7:
@@ -843,6 +992,7 @@ def _same_object_state(left: TimeframePlan, right: TimeframePlan) -> bool:
     return (
         _state_dict_equal(left.object_positions, right.object_positions)
         and _state_dict_equal(left.object_orientations, right.object_orientations)
+        and _state_dict_equal(left.object_velocities, right.object_velocities)
     )
 
 

@@ -13,10 +13,12 @@ from .model import (
     TrajectorySpec,
     UserEquipment,
 )
-from .scenarios import load_scenario_asset
+from .scenarios import load_scenario_asset, object_mesh_path
+from .sensing_targets import SENSING_TARGET_NAMES, is_sensing_target, sensing_options
 from .trajectories import sample_trajectory
 
 _POLARIZATIONS = {"V", "H", "VH", "cross"}
+_SENSING_CHANNELS = {"combined", "sensing_only", "background_only"}
 _TRAJECTORY_KINDS = {"static", "linear", "polyline", "curve"}
 _TRAJECTORY_EASINGS = {"linear", "smoothstep"}
 _DELAY_BIN_CHANNEL_MODES = {
@@ -52,7 +54,18 @@ def validate_request(request: SimulationRequest) -> None:
         if not obj.object_name:
             errors.append(f"objects[{idx}].object_name must not be empty")
         _validate_trajectory(f"objects[{idx}].trajectory", obj.trajectory, errors)
+        if is_sensing_target(obj):
+            _validate_sensing_target(f"objects[{idx}]", obj, scene.scenario_path, errors)
+        elif obj.sensing is not None:
+            errors.append(
+                f"objects[{idx}].sensing is only valid for 3GPP sensing targets "
+                f"({', '.join(SENSING_TARGET_NAMES)})"
+            )
     _validate_object_targets(request, errors)
+    if scene.timeframe_interval_s is not None and not (
+        math.isfinite(scene.timeframe_interval_s) and scene.timeframe_interval_s > 0.0
+    ):
+        errors.append("scene.timeframe_interval_s must be null or a positive number of seconds")
 
     if scene.radiomap.enabled:
         _validate_device("radiomap.ue_template", scene.radiomap.ue_template, errors)
@@ -87,6 +100,18 @@ def validate_request(request: SimulationRequest) -> None:
         errors.append("sionna.batch_timeframes must be at least 1")
     if request.sionna.max_timeframes < 1:
         errors.append("sionna.max_timeframes must be at least 1")
+    if request.sionna.sensing_channel not in _SENSING_CHANNELS:
+        errors.append(f"sionna.sensing_channel must be one of {sorted(_SENSING_CHANNELS)}")
+    elif request.sionna.sensing_channel == "sensing_only" and not any(
+        is_sensing_target(obj) for obj in scene.objects
+    ):
+        errors.append("sionna.sensing_channel 'sensing_only' requires at least one 3GPP sensing target")
+    if request.sionna.rcs_max_depth is not None and request.sionna.rcs_max_depth < 1:
+        errors.append("sionna.rcs_max_depth must be null or at least 1")
+    if request.sionna.rcs_samples_per_sp < 1:
+        errors.append("sionna.rcs_samples_per_sp must be at least 1")
+    if request.sionna.rcs_buffer_size_per_sp < 1:
+        errors.append("sionna.rcs_buffer_size_per_sp must be at least 1")
     try:
         estimated_timeframes = estimate_request_size(request).timeframe_count
     except ValueError as exc:
@@ -177,12 +202,30 @@ def _validate_object_targets(request: SimulationRequest, errors: list[str]) -> N
     if not available:
         return
     for idx, obj in enumerate(request.scene.objects):
+        if is_sensing_target(obj):
+            continue
         if obj.object_name not in available:
             preview = ", ".join(sorted(available)[:8])
             errors.append(
                 f"objects[{idx}].object_name '{obj.object_name}' is not present in "
                 f"{scenario_path}; available objects include: {preview}"
             )
+
+
+def _validate_sensing_target(prefix: str, obj, scenario_path, errors: list[str]) -> None:
+    options = sensing_options(obj)
+    if options.model_type not in (1, 2):
+        errors.append(f"{prefix}.sensing.model_type must be 1 or 2")
+    if options.dimensions is not None and options.mesh:
+        errors.append(f"{prefix}.sensing.dimensions and .mesh are mutually exclusive")
+    if options.dimensions is not None and any(
+        not math.isfinite(value) or value <= 0.0 for value in options.dimensions
+    ):
+        errors.append(f"{prefix}.sensing.dimensions must be positive")
+    if options.mesh and object_mesh_path(scenario_path.parent / "objects", options.mesh) is None:
+        errors.append(
+            f"{prefix}.sensing.mesh '{options.mesh}' was not found in {scenario_path.parent / 'objects'}"
+        )
 
 
 def _validate_channel_frequency_grid(request: SimulationRequest, band_vectors: list, errors: list[str]) -> None:

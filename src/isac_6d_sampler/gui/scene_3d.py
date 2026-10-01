@@ -22,6 +22,14 @@ from isac_6d_sampler.core.scenarios import (
     ScenarioAsset,
     _struct_format,
     _xyz_property_indices,
+    object_mesh_path,
+    read_obj_bounds,
+)
+from isac_6d_sampler.core.sensing_targets import (
+    is_sensing_target,
+    sensing_options,
+    sensing_target_dimensions,
+    sensing_target_type,
 )
 from isac_6d_sampler.core.trajectories import normalized_bezier_handles, sample_radiomap_preview_grid, sample_trajectory
 
@@ -133,6 +141,38 @@ class Scene3DView(gl.GLViewWidget):
             self.addItem(item)
             self._items.append(item)
             self._antenna_diagram_items.append(item)
+        self._add_scattering_point_diagrams()
+
+    def _add_scattering_point_diagrams(self) -> None:
+        """Monostatic RCS lobe of every scattering point of the 3GPP sensing targets."""
+        for obj in self._design.objects:
+            if not is_sensing_target(obj):
+                continue
+            dimensions = self._sensing_target_lcs_dimensions(obj)
+            if dimensions is None:
+                continue
+            try:
+                meshes = _scattering_point_lobe_meshes(obj, dimensions)
+            except Exception as exc:  # noqa: BLE001 - a missing Sionna/GPU must not break the view
+                print(f"Scattering-point patterns unavailable for {obj.id}: {exc}")
+                continue
+            for vertices, faces, face_colors in meshes:
+                item = _lobe_mesh_item(vertices, faces, face_colors)
+                self.addItem(item)
+                self._items.append(item)
+                self._antenna_diagram_items.append(item)
+
+    def _sensing_target_lcs_dimensions(self, obj) -> tuple[float, float, float] | None:
+        dimensions = sensing_target_dimensions(obj)
+        if dimensions is not None or self._asset is None:
+            return dimensions
+        # Mesh-shaped target: Sionna places the scattering points from the mesh AABB.
+        path = object_mesh_path(Path(self._asset.path).parent / "objects", sensing_options(obj).mesh)
+        bounds = read_obj_bounds(path) if path is not None else None
+        if bounds is None:
+            return None
+        extents = np.asarray(bounds.max_xyz, dtype=np.float64) - np.asarray(bounds.min_xyz, dtype=np.float64)
+        return tuple(float(value) for value in extents)
 
     def hide_antenna_diagrams(self) -> None:
         for item in list(self._antenna_diagram_items):
@@ -457,6 +497,7 @@ class Scene3DView(gl.GLViewWidget):
 
     def _add_dynamic_items(self) -> None:
         self._add_dynamic_object_meshes()
+        self._add_sensing_target_meshes()
         self._add_radiomap()
         self._add_trajectories()
         self._add_trajectory_handles()
@@ -574,6 +615,45 @@ class Scene3DView(gl.GLViewWidget):
                     glOptions="opaque",
                 )
                 self._add_dynamic_item(item)
+
+    def _add_sensing_target_meshes(self) -> None:
+        """Draw 3GPP sensing targets as translucent cuboids (or their optional mesh)."""
+        if self._design is None:
+            return
+        for obj in self._design.objects:
+            if not is_sensing_target(obj):
+                continue
+            vertices, faces = self._sensing_target_geometry(obj)
+            if vertices.size == 0 or faces.size == 0:
+                continue
+            rendered = _transform_mesh_vertices(
+                vertices,
+                (np.min(vertices, axis=0) + np.max(vertices, axis=0)) / 2.0,
+                np.asarray(obj.position, dtype=np.float64),
+                obj.orientation_rad,
+            )
+            mesh_data = gl.MeshData(vertexes=rendered.astype(np.float32), faces=faces.astype(np.int32))
+            item = gl.GLMeshItem(
+                meshdata=mesh_data,
+                color=SENSING_TARGET_COLOR,
+                smooth=False,
+                drawEdges=True,
+                drawFaces=True,
+                shader="balloon",
+                glOptions="translucent",
+            )
+            self._add_dynamic_item(item)
+
+    def _sensing_target_geometry(self, obj) -> tuple[np.ndarray, np.ndarray]:
+        dimensions = sensing_target_dimensions(obj)
+        if dimensions is not None:
+            return _cuboid_mesh(dimensions)
+        if self._asset is None:
+            return np.empty((0, 3)), np.empty((0, 3))
+        path = object_mesh_path(Path(self._asset.path).parent / "objects", sensing_options(obj).mesh)
+        if path is None:
+            return np.empty((0, 3)), np.empty((0, 3))
+        return _load_mesh_preview(str(path), _mtime(path))
 
     def _mesh_render_vertices(self, mesh, vertices: np.ndarray) -> tuple[np.ndarray, ...]:
         if self._design is None:
@@ -1769,6 +1849,30 @@ def _local_axes(orientation_rad) -> dict[str, np.ndarray]:
     }
 
 
+SENSING_TARGET_COLOR = (0.2, 0.4, 1.0, 0.5)
+
+
+def _cuboid_mesh(dimensions) -> tuple[np.ndarray, np.ndarray]:
+    """Axis-aligned cuboid centered at the origin, as (vertices, triangle faces)."""
+    half = np.asarray(dimensions, dtype=np.float64) / 2.0
+    signs = np.array(
+        [[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)],
+        dtype=np.float64,
+    )
+    faces = np.array(
+        [
+            [0, 1, 3], [0, 3, 2],  # -x
+            [4, 6, 7], [4, 7, 5],  # +x
+            [0, 4, 5], [0, 5, 1],  # -y
+            [2, 3, 7], [2, 7, 6],  # +y
+            [0, 2, 6], [0, 6, 4],  # -z
+            [1, 5, 7], [1, 7, 3],  # +z
+        ],
+        dtype=np.int32,
+    )
+    return signs * half, faces
+
+
 def _mesh_anchor(mesh, vertices: np.ndarray) -> np.ndarray:
     if getattr(mesh, "bounds", None) is not None:
         mins = np.asarray(mesh.bounds.min_xyz, dtype=np.float64)
@@ -1962,6 +2066,10 @@ def _antenna_diagram_item(
         pattern_name=pattern_name,
         color_bias=color_bias,
     )
+    return _lobe_mesh_item(vertices, faces, face_colors)
+
+
+def _lobe_mesh_item(vertices: np.ndarray, faces: np.ndarray, face_colors: np.ndarray) -> gl.GLMeshItem:
     mesh_data = gl.MeshData(
         vertexes=vertices.astype(np.float32),
         faces=faces.astype(np.int32),
@@ -2180,63 +2288,118 @@ def _path_color(normalized_power: float) -> tuple[float, float, float, float]:
     return (float(rgb[0]), float(rgb[1]), float(rgb[2]), 0.35 + 0.55 * value)
 
 
+_SCATTERING_LOBE_COLOR = (0.15, 0.95, 0.35)
+
+
+def _scattering_point_lobe_meshes(
+    obj,
+    dimensions,
+    *,
+    alpha_samples: int = 25,
+    beta_samples: int = 48,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """One lobe mesh per scattering point of a 3GPP sensing target.
+
+    Each lobe is the monostatic RCS seen from every direction, normalized to the
+    strongest value over all points of the target so that their relative
+    strengths stay visible.
+    """
+    from isac_6d_sampler.sim.rcs_patterns import monostatic_scattering_patterns
+
+    directions, _ = _diagram_local_directions(max(int(alpha_samples), 5), max(int(beta_samples), 8))
+    patterns = monostatic_scattering_patterns(
+        sensing_target_type(obj.object_name).object_type,
+        sensing_options(obj).model_type,
+        dimensions,
+        directions,
+    )
+    peak_dbsm = max(float(np.max(pattern.rcs_dbsm)) for pattern in patterns)
+    radius_m = max(1.0, 0.6 * max(dimensions))
+    axes = _local_axes(obj.orientation_rad)
+    rotation = np.column_stack([axes["x"], axes["y"], axes["z"]])
+    center = np.asarray(obj.position, dtype=np.float64)
+    return [
+        _antenna_diagram_mesh(
+            origin=center + rotation @ np.asarray(pattern.lcs_position, dtype=np.float64),
+            orientation_rad=obj.orientation_rad,
+            gain_db=pattern.rcs_dbsm - peak_dbsm,
+            radius_m=radius_m,
+            color_bias=_SCATTERING_LOBE_COLOR,
+            alpha_samples=alpha_samples,
+            beta_samples=beta_samples,
+        )
+        for pattern in patterns
+    ]
+
+
+def _diagram_local_directions(alpha_samples: int, beta_samples: int) -> tuple[np.ndarray, list[slice]]:
+    """Unit directions of a lobe mesh: poles along local +/-x, rings around the x-axis.
+
+    Returns all directions stacked, plus the slice of each pole/ring in that array.
+    """
+    alpha = np.linspace(0.0, np.pi, alpha_samples, dtype=np.float64)
+    beta = np.linspace(0.0, 2.0 * np.pi, beta_samples, endpoint=False, dtype=np.float64)
+    blocks = []
+    slices = []
+    offset = 0
+    for a_idx, a_value in enumerate(alpha):
+        if a_idx in {0, alpha_samples - 1}:
+            block = np.asarray([[np.cos(a_value), 0.0, np.sin(a_value)]], dtype=np.float64)
+        else:
+            block = np.stack(
+                [
+                    np.full_like(beta, np.cos(a_value)),
+                    np.sin(a_value) * np.cos(beta),
+                    np.sin(a_value) * np.sin(beta),
+                ],
+                axis=-1,
+            )
+        blocks.append(block)
+        slices.append(slice(offset, offset + block.shape[0]))
+        offset += block.shape[0]
+    return np.concatenate(blocks, axis=0), slices
+
+
 def _antenna_diagram_mesh(
     *,
     origin: np.ndarray,
     orientation_rad,
-    pattern_name: str,
+    pattern_name: str = "iso",
     color_bias: tuple[float, float, float] = (0.2, 0.5, 1.0),
     alpha_samples: int = 25,
     beta_samples: int = 48,
+    gain_db: np.ndarray | None = None,
+    radius_m: float = _ANTENNA_DIAGRAM_RADIUS_M,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Lobe mesh of a normalized pattern (0 dB maximum, clipped at the dB floor).
+
+    The pattern is ``pattern_name`` unless ``gain_db`` gives the values directly,
+    one per direction of ``_diagram_local_directions(alpha_samples, beta_samples)``.
+    """
     alpha_samples = max(int(alpha_samples), 5)
     beta_samples = max(int(beta_samples), 8)
-    alpha = np.linspace(0.0, np.pi, alpha_samples, dtype=np.float64)
-    beta = np.linspace(0.0, 2.0 * np.pi, beta_samples, endpoint=False, dtype=np.float64)
+    local_dirs, slices = _diagram_local_directions(alpha_samples, beta_samples)
+    if gain_db is None:
+        gain_db = _antenna_normalized_gain_db(pattern_name, local_dirs)
+    gain_db = np.clip(np.asarray(gain_db, dtype=np.float64), _ANTENNA_DIAGRAM_DB_FLOOR, 0.0)
+    normalized_all = (gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR)
+    radius_all = float(radius_m) * np.maximum(normalized_all, 0.04)
     axes = _local_axes(orientation_rad)
+    world_all = (
+        local_dirs[:, 0, None] * axes["x"]
+        + local_dirs[:, 1, None] * axes["y"]
+        + local_dirs[:, 2, None] * axes["z"]
+    )
+    origin_arr = np.asarray(origin, dtype=np.float64)
 
     vertices: list[np.ndarray] = []
     normalized_values: list[float] = []
     ring_indices: list[list[int]] = []
-    origin_arr = np.asarray(origin, dtype=np.float64)
-
-    for a_idx, a_value in enumerate(alpha):
-        if a_idx in {0, alpha_samples - 1}:
-            local_dir = np.asarray(
-                [np.cos(a_value), 0.0, np.sin(a_value)],
-                dtype=np.float64,
-            )
-            gain_db = _antenna_normalized_gain_db(pattern_name, local_dir.reshape(1, 3))[0]
-            gain_db = float(np.clip(gain_db, _ANTENNA_DIAGRAM_DB_FLOOR, 0.0))
-            normalized = float((gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR))
-            radius = _ANTENNA_DIAGRAM_RADIUS_M * max(normalized, 0.04)
-            world_dir = local_dir[0] * axes["x"] + local_dir[1] * axes["y"] + local_dir[2] * axes["z"]
-            vertices.append(origin_arr + world_dir * radius)
-            normalized_values.append(normalized)
-            ring_indices.append([len(vertices) - 1])
-            continue
-
+    for block in slices:
         ring = []
-        local_dirs = np.stack(
-            [
-                np.full_like(beta, np.cos(a_value)),
-                np.sin(a_value) * np.cos(beta),
-                np.sin(a_value) * np.sin(beta),
-            ],
-            axis=-1,
-        )
-        gain_db = _antenna_normalized_gain_db(pattern_name, local_dirs)
-        gain_db = np.clip(gain_db, _ANTENNA_DIAGRAM_DB_FLOOR, 0.0)
-        normalized_ring = (gain_db - _ANTENNA_DIAGRAM_DB_FLOOR) / abs(_ANTENNA_DIAGRAM_DB_FLOOR)
-        radius = _ANTENNA_DIAGRAM_RADIUS_M * np.maximum(normalized_ring, 0.04)
-        world_dirs = (
-            local_dirs[:, 0, None] * axes["x"]
-            + local_dirs[:, 1, None] * axes["y"]
-            + local_dirs[:, 2, None] * axes["z"]
-        )
-        for b_idx in range(beta_samples):
-            vertices.append(origin_arr + world_dirs[b_idx] * radius[b_idx])
-            normalized_values.append(float(normalized_ring[b_idx]))
+        for idx in range(block.start, block.stop):
+            vertices.append(origin_arr + world_all[idx] * radius_all[idx])
+            normalized_values.append(float(normalized_all[idx]))
             ring.append(len(vertices) - 1)
         ring_indices.append(ring)
 

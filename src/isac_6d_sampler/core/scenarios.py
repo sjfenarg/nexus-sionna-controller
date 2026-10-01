@@ -91,6 +91,23 @@ def load_scenario_asset(xml_path: Path) -> ScenarioAsset:
     )
 
 
+def object_mesh_path(objects_root: Path, object_name: str) -> Path | None:
+    """Resolve an external object mesh name (``DRONE_obj`` or ``DRONE_obj.obj``)."""
+    objects_root = Path(objects_root)
+    object_name = str(object_name)
+    candidates = []
+    raw_path = Path(object_name)
+    if raw_path.suffix.lower() == ".obj":
+        candidates.append(raw_path if raw_path.is_absolute() else objects_root / raw_path)
+    else:
+        candidates.append(objects_root / f"{object_name}.obj")
+    candidates.append(objects_root / object_name)
+    for candidate in candidates:
+        if candidate.exists() and candidate.suffix.lower() == ".obj":
+            return candidate
+    return None
+
+
 def discover_object_meshes(root: Path) -> tuple[MeshAsset, ...]:
     root = Path(root)
     if not root.exists():

@@ -51,6 +51,7 @@ class TimeframePlan:
     object_orientations: dict[str, Vector3]
     links: tuple[LinkPlan, ...]
     metadata: dict[str, object] = field(default_factory=dict)
+    object_velocities: dict[str, Vector3] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +147,7 @@ def _timeframes(
             obj.id: sample_orientations(obj.trajectory, obj.orientation_rad)
             for obj in scene.objects
         }
+        sampled_object_velocities = _sampled_velocities(sampled_objects, scene.timeframe_interval_s)
         object_frame_count = max((values.shape[0] for values in sampled_objects.values()), default=1)
         frames = []
         for object_idx in range(object_frame_count):
@@ -157,6 +159,7 @@ def _timeframes(
                 entity_id: tuple(values[min(object_idx, len(values) - 1)])
                 for entity_id, values in sampled_object_orientations.items()
             }
+            object_velocities = _velocities_at(sampled_object_velocities, object_idx)
             for grid_idx, radiomap_pos in enumerate(radiomap_positions):
                 frames.append(
                     TimeframePlan(
@@ -168,6 +171,7 @@ def _timeframes(
                             **{entity.id: entity.orientation_rad for entity in scene.base_stations},
                         },
                         object_orientations=dict(object_orientations),
+                        object_velocities=dict(object_velocities),
                         links=links,
                         metadata={
                             "frame_kind": "radiomap",
@@ -196,6 +200,7 @@ def _timeframes(
         sampled_object_orientations[obj.id] = sample_orientations(obj.trajectory, obj.orientation_rad)
         max_frames = max(max_frames, sampled_objects[obj.id].shape[0])
 
+    sampled_object_velocities = _sampled_velocities(sampled_objects, scene.timeframe_interval_s)
     frames = []
     for idx in range(max_frames):
         device_positions = {
@@ -223,6 +228,7 @@ def _timeframes(
                 object_positions=object_positions,
                 device_orientations=device_orientations,
                 object_orientations=object_orientations,
+                object_velocities=_velocities_at(sampled_object_velocities, idx),
                 links=links,
                 metadata={
                     "frame_kind": "scene",
@@ -232,6 +238,35 @@ def _timeframes(
             )
         )
     return frames
+
+
+def _sampled_velocities(
+    sampled_positions: dict[str, np.ndarray],
+    interval_s: float | None,
+) -> dict[str, np.ndarray]:
+    """Finite-difference velocities [m/s] of sampled trajectories.
+
+    Without a timeframe interval the plan has no notion of time, so no velocities
+    are produced and Sionna keeps every object at rest (zero Doppler).
+    """
+    if interval_s is None:
+        return {}
+    velocities = {}
+    for entity_id, positions in sampled_positions.items():
+        positions = np.asarray(positions, dtype=np.float64)
+        if positions.shape[0] < 2:
+            velocities[entity_id] = np.zeros_like(positions)
+        else:
+            velocities[entity_id] = np.gradient(positions, float(interval_s), axis=0)
+    return velocities
+
+
+def _velocities_at(sampled_velocities: dict[str, np.ndarray], idx: int) -> dict[str, Vector3]:
+    # Objects whose trajectory already ended stay parked, i.e. at rest.
+    return {
+        entity_id: tuple(float(v) for v in values[idx]) if idx < len(values) else (0.0, 0.0, 0.0)
+        for entity_id, values in sampled_velocities.items()
+    }
 
 
 def _is_ue_bs_pair(rx: PlannedDevice, tx: PlannedDevice) -> bool:

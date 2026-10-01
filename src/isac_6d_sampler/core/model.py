@@ -110,12 +110,25 @@ class UserEquipment:
 
 
 @dataclass(slots=True)
+class SensingTargetOptions:
+    """Options of a 3GPP TR 38.901 sensing target (see ``core.sensing_targets``)."""
+
+    model_type: Literal[1, 2] = 2
+    dimensions: Vector3 | None = None
+    mesh: str | None = None
+    random_sigma_s: bool = False
+    random_phases: bool = False
+    random_xpr: bool = False
+
+
+@dataclass(slots=True)
 class DynamicObject:
     id: str
     object_name: str = "CAR_obj"
     position: Vector3 = (0.0, 0.0, 0.0)
     orientation_rad: Vector3 = (0.0, 0.0, 0.0)
     trajectory: TrajectorySpec = field(default_factory=lambda: TrajectorySpec.static((0.0, 0.0, 0.0)))
+    sensing: SensingTargetOptions | None = None
 
 
 @dataclass(slots=True)
@@ -148,6 +161,10 @@ class SionnaConfig:
     batch_timeframes: int = 1
     max_timeframes: int = 100_000
     ue_ue_links: bool = False
+    sensing_channel: Literal["combined", "sensing_only", "background_only"] = "combined"
+    rcs_max_depth: int | None = None
+    rcs_samples_per_sp: int = 200_000
+    rcs_buffer_size_per_sp: int = 200_000
 
 
 @dataclass(slots=True)
@@ -159,6 +176,7 @@ class SceneDesign:
     user_equipments: list[UserEquipment] = field(default_factory=list)
     objects: list[DynamicObject] = field(default_factory=list)
     radiomap: RadiomapConfig = field(default_factory=RadiomapConfig)
+    timeframe_interval_s: float | None = None
 
     def ensure_defaults(self) -> None:
         if not self.base_stations:

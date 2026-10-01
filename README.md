@@ -173,6 +173,31 @@ Radiomap mode replaces explicit UEs for the simulation with a generated UE grid:
 
 In the GUI, enabling radiomap shows draggable rectangle corners in the 3D view. Explicit UE entities are ignored by the simulation while radiomap is enabled.
 
+## 3GPP Sensing Targets
+
+Sionna RT 2.2 sensing targets (3GPP TR 38.901 clause 7.9.2) are added like any other object, by `object_name`:
+
+| `object_name` | TR 38.901 type | Default size L x W x H [m] |
+|---|---|---|
+| `HUMAN_3GPP` | `human` | 0.5 x 0.5 x 1.75 |
+| `CAR_3GPP` / `CAR_SP_3GPP` | `vehicle-multi-sp` / `vehicle-single-sp` | 5.0 x 2.0 x 1.6 |
+| `AGV_3GPP` / `AGV_SP_3GPP` | `agv-multi-sp` / `agv-single-sp` | 1.0 x 0.5 x 0.5 (see below) |
+| `UAV_SMALL_3GPP` / `UAV_LARGE_3GPP` | `uav-small-size` / `uav-large-size` | 0.3 x 0.4 x 0.2 / 1.6 x 1.5 x 0.7 |
+
+```json
+{"id": "human0", "object_name": "HUMAN_3GPP",
+ "trajectory": {"kind": "linear", "points": [[0, 3, 0.875], [4, 3, 0.875]], "samples": 9},
+ "sensing": {"model_type": 2, "random_sigma_s": false, "random_phases": false, "random_xpr": false}}
+```
+
+- The optional `sensing` block also takes `dimensions` (cuboid L x W x H) or `mesh` (an `.obj` in `scenarios/objects`, e.g. `DRONE_obj`); the mesh bounding box then places the scattering points.
+- Sizes are length (along the local x-axis, which the front faces) x width x height. The AGV is 1.0 m long and 0.5 m wide because TR 38.901 clause 7.9.2.1 states that "the front of the AGV is the short edge of AGV in horizontal direction"; Sionna RT 2.2's own default (0.5 x 1.0) would put the front on the long side, so the catalog sizes are always passed to Sionna explicitly.
+- Positions are the bounding-box center, so a 1.75 m human stands on the ground at z = 0.875 m.
+- A target's surface is an absorber: it shadows the background channel and responds only through its scattering points. `CAR_3GPP` is therefore a different model from the ray-traced, calibrated `CAR_obj`; do not place both at the same pose.
+- Each solve runs `PathSolver` (background) and `RCSSolver` (paths through scattering points) and concatenates them. `sionna.sensing_channel` selects `combined` (default), `sensing_only` or `background_only`; `rcs_max_depth` (default: `max_depth`, counting the scattering event), `rcs_samples_per_sp` and `rcs_buffer_size_per_sp` tune the RCS solve.
+- Set `scene.timeframe_interval_s` to give timeframes a duration: object velocities are then derived from the trajectories and drive the Doppler shifts. Without it, objects are at rest.
+- TR 38.901 specifies these targets for 0.5-52.6 GHz. Outside that range (e.g. 77-81 GHz) the simulation runs, but a warning is emitted and `tr38901_frequency_in_range` is false in the sample metadata.
+
 ## HDF5 Output
 
 Outputs are written to:
@@ -209,6 +234,8 @@ scenarios/<scenario_name>/<sample_id>/
     positions/objects/<object_id>
     orientations/devices/<entity_id>
     orientations/objects/<object_id>
+    velocities/objects/<object_id>        (when timeframe_interval_s is set)
+    path_is_sensing/rx<i>_tx<j>           (with sensing targets, next to tau/a)
     timestamps/rx<i>_tx<j>
 ```
 

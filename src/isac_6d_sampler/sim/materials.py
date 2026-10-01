@@ -85,7 +85,8 @@ def assign_calibrated_materials(scene, scene_name: str, frequency_hz: float | No
             conductivity=conductivity,
             scattering_coefficient=tuned_diffuse_scattering_coefficient_at_frequency(spec, representative_frequency_hz),
             scattering_pattern=spec.scattering_pattern,
-            alpha_r=spec.alpha_r,
+            # Sionna RT >= 2.2 type-checks the scattering lobe exponent as an integer.
+            alpha_r=int(spec.alpha_r),
             frequency_update_callback=callback,
         )
 

@@ -12,6 +12,7 @@ from .model import (
     FrequencyBand,
     RadiomapConfig,
     SceneDesign,
+    SensingTargetOptions,
     SimulationRequest,
     SionnaConfig,
     TrajectorySpec,
@@ -78,6 +79,7 @@ def _scene(data: dict[str, Any]) -> SceneDesign:
         user_equipments=[_ue(item) for item in data.get("user_equipments", [])],
         objects=[_object(item) for item in data.get("objects", [])],
         radiomap=_radiomap(data.get("radiomap", {})),
+        timeframe_interval_s=_optional_float(data.get("timeframe_interval_s")),
     )
     return scene
 
@@ -146,6 +148,19 @@ def _object(data: dict[str, Any]) -> DynamicObject:
         position=position,
         orientation_rad=_vector3(data.get("orientation_rad", (0.0, 0.0, 0.0))),
         trajectory=_trajectory(data.get("trajectory", _static_trajectory_data(position))),
+        sensing=_sensing_target(data["sensing"]) if data.get("sensing") is not None else None,
+    )
+
+
+def _sensing_target(data: dict[str, Any]) -> SensingTargetOptions:
+    mesh = data.get("mesh")
+    return SensingTargetOptions(
+        model_type=int(data.get("model_type", 2)),
+        dimensions=_optional_vector3(data.get("dimensions")),
+        mesh=str(mesh) if mesh else None,
+        random_sigma_s=bool(data.get("random_sigma_s", False)),
+        random_phases=bool(data.get("random_phases", False)),
+        random_xpr=bool(data.get("random_xpr", False)),
     )
 
 
@@ -190,6 +205,10 @@ def _sionna(data: dict[str, Any]) -> SionnaConfig:
         batch_timeframes=int(data.get("batch_timeframes", 1)),
         max_timeframes=int(data.get("max_timeframes", 100_000)),
         ue_ue_links=bool(data.get("ue_ue_links", False)),
+        sensing_channel=str(data.get("sensing_channel", "combined")),
+        rcs_max_depth=_optional_int(data.get("rcs_max_depth")),
+        rcs_samples_per_sp=int(data.get("rcs_samples_per_sp", 200_000)),
+        rcs_buffer_size_per_sp=int(data.get("rcs_buffer_size_per_sp", 200_000)),
     )
 
 
@@ -209,6 +228,12 @@ def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _static_trajectory_data(position: tuple[float, float, float]) -> dict[str, Any]:

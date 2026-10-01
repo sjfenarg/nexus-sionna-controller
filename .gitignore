@@ -49,6 +49,7 @@ scenes/channel_charting_dataset/
 scenes/channel_charting_dataset_v2/
 scenes/channel_charting_pilot_6ue_16s.json
 ugly_twin/
+tests/
 
 # Large generated/raw scenario assets
 docs/Tree_V10_Final.obj

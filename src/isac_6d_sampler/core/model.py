@@ -111,7 +111,7 @@ class UserEquipment:
 
 @dataclass(slots=True)
 class SensingTargetOptions:
-    """Options of a 3GPP TR 38.901 sensing target (see ``core.sensing_targets``)."""
+    """Options of a 3GPP or MSC sensing target (see ``core.sensing_targets``)."""
 
     model_type: Literal[1, 2] = 2
     dimensions: Vector3 | None = None
@@ -119,6 +119,8 @@ class SensingTargetOptions:
     random_sigma_s: bool = False
     random_phases: bool = False
     random_xpr: bool = False
+    random_cpr: bool = False
+    msc_parameter_seed: int = 0
 
 
 @dataclass(slots=True)

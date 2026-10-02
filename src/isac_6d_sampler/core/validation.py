@@ -14,7 +14,7 @@ from .model import (
     UserEquipment,
 )
 from .scenarios import load_scenario_asset, object_mesh_path
-from .sensing_targets import SENSING_TARGET_NAMES, is_sensing_target, sensing_options
+from .sensing_targets import SENSING_TARGET_NAMES, is_sensing_target, sensing_options, sensing_target_type
 from .trajectories import sample_trajectory
 
 _POLARIZATIONS = {"V", "H", "VH", "cross"}
@@ -58,7 +58,7 @@ def validate_request(request: SimulationRequest) -> None:
             _validate_sensing_target(f"objects[{idx}]", obj, scene.scenario_path, errors)
         elif obj.sensing is not None:
             errors.append(
-                f"objects[{idx}].sensing is only valid for 3GPP sensing targets "
+                f"objects[{idx}].sensing is only valid for sensing targets "
                 f"({', '.join(SENSING_TARGET_NAMES)})"
             )
     _validate_object_targets(request, errors)
@@ -105,7 +105,7 @@ def validate_request(request: SimulationRequest) -> None:
     elif request.sionna.sensing_channel == "sensing_only" and not any(
         is_sensing_target(obj) for obj in scene.objects
     ):
-        errors.append("sionna.sensing_channel 'sensing_only' requires at least one 3GPP sensing target")
+        errors.append("sionna.sensing_channel 'sensing_only' requires at least one sensing target")
     if request.sionna.rcs_max_depth is not None and request.sionna.rcs_max_depth < 1:
         errors.append("sionna.rcs_max_depth must be null or at least 1")
     if request.sionna.rcs_samples_per_sp < 1:
@@ -214,6 +214,18 @@ def _validate_object_targets(request: SimulationRequest, errors: list[str]) -> N
 
 def _validate_sensing_target(prefix: str, obj, scenario_path, errors: list[str]) -> None:
     options = sensing_options(obj)
+    target = sensing_target_type(obj.object_name)
+    if target.model == "msc":
+        if (isinstance(options.msc_parameter_seed, bool)
+                or not isinstance(options.msc_parameter_seed, int)
+                or options.msc_parameter_seed < 0):
+            errors.append(f"{prefix}.sensing.msc_parameter_seed must be a non-negative integer")
+        if options.random_sigma_s:
+            errors.append(f"{prefix}.sensing.random_sigma_s is a 3GPP option, unavailable for MSC")
+        if options.model_type != 2:
+            errors.append(f"{prefix}.sensing.model_type must be 2 for MSC")
+    elif options.random_cpr:
+        errors.append(f"{prefix}.sensing.random_cpr is only available for MSC")
     if options.model_type not in (1, 2):
         errors.append(f"{prefix}.sensing.model_type must be 1 or 2")
     if options.dimensions is not None and options.mesh:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import tempfile
 from typing import Callable
@@ -23,6 +24,7 @@ from isac_6d_sampler.core.model import (
 from isac_6d_sampler.core.scenarios import object_mesh_path
 from isac_6d_sampler.core.sensing_targets import (
     TR38901_VALID_FREQUENCY_RANGE_HZ,
+    MSC_VALID_FREQUENCY_RANGE_HZ,
     frequency_in_tr38901_range,
     is_sensing_target,
     sensing_options,
@@ -93,7 +95,17 @@ class SionnaSimulator:
             sensing_target_ids,
             request.sionna.sensing_channel,
             frequency_vector,
+            {obj.id: sensing_target_type(obj.object_name).model
+             for obj in scene_design.objects if is_sensing_target(obj)},
         )
+        if any(hasattr(target.scattering_model, "parameter_dict")
+               for target in scene.sensing_targets.values()):
+            sensing_metadata["msc_parameters_json"] = json.dumps({
+                name: target.scattering_model.parameter_dict()
+                for name, target in scene.sensing_targets.items()
+                if hasattr(target.scattering_model, "parameter_dict")
+            })
+            sensing_metadata["msc_frequency_resolved"] = _needs_msc_frequency_sweep(scene, request)
 
         plan = build_simulation_plan(scene_design, include_ue_ue_links=request.sionna.ue_ue_links)
         result_frames: list[TimeframeResult] = []
@@ -268,6 +280,12 @@ class SionnaSimulator:
                     cleanup_names.append(rx_name)
 
                 paths = _solve_paths(scene, solver, rcs_solver, request, los=batch.los)
+                msc_cfr = None
+                if _needs_msc_frequency_sweep(scene, request):
+                    msc_cfr = _msc_frequency_sweep(scene, solver, rcs_solver, request,
+                                                   f_vector, batch.los,
+                                                   lambda f: self._configure_arrays(
+                                                       scene, PlanarArray, representative, frequency_hz=f))
                 for ref in batch.refs:
                     link = ref.link
                     solver_rx = _solver_rx_device(link)
@@ -295,6 +313,12 @@ class SionnaSimulator:
                             else None,
                         )
                     (h, path_delays, path_coefficients, path_vertices), sensing_mask = reciprocal_cache[cache_key]
+                    if msc_cfr is not None:
+                        resolved = (_slice_link_array(msc_cfr, rx_local_index, tx_local_index)
+                                    * field_amplitude_from_dbm(request.sionna.tx_power_dbm))
+                        if request.channel_mode != ChannelMode.FREQUENCY_DOMAIN:
+                            resolved = np.fft.ifft(resolved, axis=-1)
+                        h = _reshape_h_for_reference(resolved, _solver_link(link)).astype(np.complex64)
                     if _link_uses_reverse_solver_direction(link):
                         h, path_delays, path_coefficients = _transpose_reciprocal_link_data(
                             h,
@@ -391,7 +415,7 @@ class SionnaSimulator:
         scene.edit(add=scene_objects)
 
     def _add_sensing_targets(self, scene, design) -> list[str]:
-        """Add the 3GPP TR 38.901 sensing targets (``HUMAN_3GPP``, ``CAR_3GPP``, ...)."""
+        """Add catalog sensing targets through their native Sionna target classes."""
         objects = [obj for obj in design.objects if is_sensing_target(obj)]
         if not objects:
             return []
@@ -401,6 +425,22 @@ class SionnaSimulator:
         targets = []
         for obj in objects:
             options = sensing_options(obj)
+            catalog = sensing_target_type(obj.object_name)
+            target_class = TR38901SensingTarget
+            model_options = {"model_type": options.model_type,
+                             "random_sigma_s": options.random_sigma_s}
+            if catalog.model == "msc":
+                try:
+                    from sionna.rt.rcs import MSCSensingTarget
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "MSC extension is missing. Run the controller's "
+                        "scripts/install_msc_extension.py with this environment's Python."
+                    ) from exc
+                target_class = MSCSensingTarget
+                model_options = {"parameter_seed": options.msc_parameter_seed,
+                                 "frequency_hz": float(scene.frequency[0]),
+                                 "random_cpr": options.random_cpr}
             geometry: dict[str, object] = {}
             if options.mesh:
                 mesh_path = object_mesh_path(objects_root, options.mesh)
@@ -411,15 +451,14 @@ class SionnaSimulator:
                 # Always explicit, so the catalog (not Sionna's defaults) defines the size.
                 geometry.update(zip(("length", "width", "height"), sensing_target_dimensions(obj)))
             targets.append(
-                TR38901SensingTarget(
+                target_class(
                     name=obj.id,
-                    object_type=sensing_target_type(obj.object_name).object_type,
-                    model_type=options.model_type,
+                    object_type=catalog.object_type,
                     position=_vector3_for_mitsuba(obj.position),
                     orientation=_vector3_for_mitsuba(obj.orientation_rad),
-                    random_sigma_s=options.random_sigma_s,
                     random_phases=options.random_phases,
                     random_xpr=options.random_xpr,
+                    **model_options,
                     **geometry,
                 )
             )
@@ -436,6 +475,40 @@ def _rcs_solver_for_scene(scene, request: SimulationRequest):
     from sionna.rt.rcs import RCSSolver
 
     return RCSSolver()
+
+
+def _needs_msc_frequency_sweep(scene, request):
+    return (request.sionna.sensing_channel != "background_only"
+            and request.channel_mode in (ChannelMode.FREQUENCY_DOMAIN, ChannelMode.PDP_IFFT_EXACT,
+                                     ChannelMode.PDP_IFFT_GRIDDED)
+            and any(hasattr(target.scattering_model, "set_frequency")
+                    for target in getattr(scene, "sensing_targets", {}).values()))
+
+
+def _msc_frequency_sweep(scene, path_solver, rcs_solver, request, frequencies, los, configure_arrays):
+    """Resolve each absolute RF frequency, including the MSC aperture kernel.
+
+    A carrier CIR followed by cfr(offsets) would freeze the frequency-dependent
+    center gain. An explicit sweep preserves it and leaves carrier a/tau intact.
+    This costs one solve per bin; use small grids while exploring prototypes.
+    """
+    carrier = float(scene.frequency[0])
+    samples = []
+    try:
+        for frequency in frequencies:
+            scene.frequency = float(frequency)
+            configure_arrays(float(frequency))
+            paths = _solve_paths(scene, path_solver, rcs_solver, request, los=los)
+            samples.append(np.asarray(paths.cfr(np.array([0.0]), normalize_delays=False,
+                                                normalize=False, out_type="numpy")))
+    finally:
+        scene.frequency = carrier
+        configure_arrays(carrier)
+        for target in scene.sensing_targets.values():
+            bind = getattr(target.scattering_model, "set_frequency", None)
+            if bind is not None:
+                bind(carrier)
+    return np.concatenate(samples, axis=-1).astype(np.complex64)
 
 
 def _solve_paths(scene, path_solver, rcs_solver, request: SimulationRequest, *, los: bool):
@@ -480,13 +553,15 @@ def _solve_paths(scene, path_solver, rcs_solver, request: SimulationRequest, *, 
     return background.concat(sensing)
 
 
-def _sensing_metadata(target_ids: list[str], sensing_channel: str, frequency_vector: np.ndarray) -> dict:
+def _sensing_metadata(target_ids: list[str], sensing_channel: str, frequency_vector: np.ndarray,
+                      target_models: dict[str, str] | None = None) -> dict:
     if not target_ids:
         return {}
     f_min = float(np.min(frequency_vector))
     f_max = float(np.max(frequency_vector))
     in_range = frequency_in_tr38901_range(f_min) and frequency_in_tr38901_range(f_max)
-    if not in_range:
+    models = target_models or {name: "tr38901" for name in target_ids}
+    if "tr38901" in models.values() and not in_range:
         low, high = TR38901_VALID_FREQUENCY_RANGE_HZ
         warnings.warn(
             f"3GPP TR 38.901 sensing targets are specified for {low / 1e9:g}-{high / 1e9:g} GHz; "
@@ -494,11 +569,22 @@ def _sensing_metadata(target_ids: list[str], sensing_channel: str, frequency_vec
             RuntimeWarning,
             stacklevel=3,
         )
-    return {
+    metadata = {
         "sensing_targets": ",".join(target_ids),
         "sensing_channel": sensing_channel,
-        "tr38901_frequency_in_range": in_range,
     }
+    if "tr38901" in models.values():
+        metadata["tr38901_frequency_in_range"] = in_range
+    if "msc" in models.values():
+        low, high = MSC_VALID_FREQUENCY_RANGE_HZ
+        msc_in_range = low <= f_min <= f_max <= high
+        metadata.update(msc_frequency_in_range=msc_in_range, msc_calibrated=False,
+                        msc_frequency_evaluation="RF sweep for frequency/ifft modes; carrier for path/bin modes")
+        if not msc_in_range:
+            warnings.warn("MSC manuscript covers 10-15 GHz; requested band is outside it. "
+                          "Current MSC parameters are uncalibrated placeholders.", RuntimeWarning,
+                          stacklevel=3)
+    return metadata
 
 
 @contextmanager
@@ -648,8 +734,9 @@ def _paths_to_link_data(
         a, tau = paths.cir(normalize_delays=False, out_type="numpy")
         delays = _slice_link_array(np.asarray(tau), rx_local_index, tx_local_index)
         coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)
-        if coeffs.ndim > 0 and coeffs.shape[-1] == 1 and coeffs.ndim == delays.ndim + 1:
+        if coeffs.ndim > delays.ndim and coeffs.shape[-1] == 1:
             coeffs = np.squeeze(coeffs, axis=-1)
+        delays = np.broadcast_to(delays, coeffs.shape)
         path_vertices = _extract_path_vertices_for_link(paths, rx_local_index, tx_local_index)
         coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
         return (
@@ -662,8 +749,9 @@ def _paths_to_link_data(
     a, tau = paths.cir(normalize_delays=False, out_type="numpy")
     delays = _slice_link_array(np.asarray(tau), rx_local_index, tx_local_index)
     coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)
-    if coeffs.ndim > 0 and coeffs.shape[-1] == 1 and coeffs.ndim == delays.ndim + 1:
+    if coeffs.ndim > delays.ndim and coeffs.shape[-1] == 1:
         coeffs = np.squeeze(coeffs, axis=-1)
+    delays = np.broadcast_to(delays, coeffs.shape)
     path_vertices = _extract_path_vertices_for_link(paths, rx_local_index, tx_local_index)
     coeffs = coeffs * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
     h = render_channel_samples(delays, coeffs, baseband_frequencies, request.channel_mode)
@@ -793,7 +881,8 @@ def _reshape_path_delays_for_reference(delays: np.ndarray, link: LinkPlan) -> np
     elif delays.ndim == 3 and delays.shape[0] == 1:
         delays = delays[0, :, :]
     elif delays.ndim == 1:
-        delays = delays.reshape(rx_ant, tx_ant, path_count)
+        # Synthetic-array delays have no antenna axes; all elements share them.
+        delays = np.broadcast_to(delays, (rx_ant, tx_ant, path_count))
 
     if delays.shape[:2] != (rx_ant, tx_ant):
         delays = delays.reshape(rx_ant, tx_ant, path_count)

@@ -1,8 +1,7 @@
-"""Monostatic RCS patterns of the scattering points of 3GPP sensing targets.
+"""Monostatic RCS patterns of TR38901 and MSC scattering points.
 
-The patterns are evaluated with Sionna RT's own TR 38.901 model, so the GUI shows
-exactly what ``RCSSolver`` uses. They are the deterministic part of the model
-(``sigma_M * sigma_D``): the random ``sigma_S`` draw is left out.
+The GUI evaluates the same RCS callable as ``RCSSolver``. TR38901's random
+``sigma_S`` draw is disabled; MSC uses seeded prototype kernels at the carrier.
 """
 
 from __future__ import annotations
@@ -28,8 +27,12 @@ def monostatic_scattering_patterns(
     model_type: int,
     dimensions: Vector3,
     directions: np.ndarray,
+    *,
+    sensing_model: str = "tr38901",
+    frequency_hz: float = 12.5e9,
+    parameter_seed: int = 0,
 ) -> tuple[ScatteringPointPattern, ...]:
-    """Monostatic RCS of every scattering point of a TR 38.901 sensing target.
+    """Monostatic RCS of every scattering point at the preview carrier.
 
     ``directions`` are unit vectors in the target LCS pointing from the target
     towards the observer, i.e. a co-located radar illuminates the target along
@@ -41,13 +44,16 @@ def monostatic_scattering_patterns(
         int(model_type),
         tuple(round(float(value), 9) for value in dimensions),
         directions.tobytes(),
+        sensing_model,
+        float(frequency_hz),
+        parameter_seed,
     )
     return _cached_patterns(key)
 
 
 @lru_cache(maxsize=64)
 def _cached_patterns(key) -> tuple[ScatteringPointPattern, ...]:
-    object_type, model_type, dimensions, direction_bytes = key
+    object_type, model_type, dimensions, direction_bytes, sensing_model, frequency_hz, parameter_seed = key
     directions = np.frombuffer(direction_bytes, dtype=np.float64).reshape(-1, 3)
     _ensure_mitsuba_variant()
 
@@ -56,10 +62,16 @@ def _cached_patterns(key) -> tuple[ScatteringPointPattern, ...]:
     from sionna.rt.rcs import TR38901SensingTarget
 
     length, width, height = dimensions
-    target = TR38901SensingTarget(
+    target_class = TR38901SensingTarget
+    model_options = {"model_type": model_type}
+    if sensing_model == "msc":
+        from sionna.rt.rcs import MSCSensingTarget
+        target_class = MSCSensingTarget
+        model_options = {"frequency_hz": frequency_hz, "parameter_seed": parameter_seed}
+    target = target_class(
         name="rcs_pattern_probe",
         object_type=object_type,
-        model_type=model_type,
+        **model_options,
         length=length,
         width=width,
         height=height,

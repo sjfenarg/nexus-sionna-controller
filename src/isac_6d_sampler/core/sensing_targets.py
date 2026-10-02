@@ -7,6 +7,7 @@ from .model import DynamicObject, SensingTargetOptions, Vector3
 # 3GPP TR 38.901 clause 7.9 sensing targets are specified for 0.5-52.6 GHz.
 # Sionna does not enforce this range, so the backend only flags it.
 TR38901_VALID_FREQUENCY_RANGE_HZ = (0.5e9, 52.6e9)
+MSC_VALID_FREQUENCY_RANGE_HZ = (10e9, 15e9)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,7 @@ class SensingTargetType:
     object_type: str
     dimensions_m: Vector3
     description: str
+    model: str = "tr38901"
 
 
 # Default (length, width, height) in the target LCS: length along x, the direction
@@ -34,6 +36,12 @@ SENSING_TARGET_TYPES: tuple[SensingTargetType, ...] = (
     SensingTargetType("AGV_SP_3GPP", "agv-single-sp", (1.0, 0.5, 0.5), "AGV, single scattering point"),
     SensingTargetType("UAV_SMALL_3GPP", "uav-small-size", (0.3, 0.4, 0.2), "Small UAV, single scattering point"),
     SensingTargetType("UAV_LARGE_3GPP", "uav-large-size", (1.6, 1.5, 0.7), "Large UAV, single scattering point"),
+    SensingTargetType("HUMAN_MSC", "human", (0.5, 0.5, 1.75), "MSC human, one center (prototype)", "msc"),
+    SensingTargetType("HUMAN_MULTI_MSC", "human-multi-sp", (0.5, 0.5, 1.75), "MSC human, five centers (prototype)", "msc"),
+    SensingTargetType("CAR_MSC", "vehicle-multi-sp", (5.0, 2.0, 1.6), "MSC car, five centers (prototype)", "msc"),
+    SensingTargetType("CAR_SP_MSC", "vehicle-single-sp", (5.0, 2.0, 1.6), "MSC car, one center (prototype)", "msc"),
+    SensingTargetType("AGV_MSC", "agv-multi-sp", (1.0, 0.5, 0.5), "MSC AGV, five centers (prototype)", "msc"),
+    SensingTargetType("AGV_SP_MSC", "agv-single-sp", (1.0, 0.5, 0.5), "MSC AGV, one center (prototype)", "msc"),
 )
 SENSING_TARGET_NAMES = tuple(target.name for target in SENSING_TARGET_TYPES)
 _BY_NAME = {target.name: target for target in SENSING_TARGET_TYPES}

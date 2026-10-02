@@ -90,6 +90,7 @@ class Scene3DView(gl.GLViewWidget):
         self._items: list[object] = []
         self._dynamic_items: list[object] = []
         self._antenna_diagram_items: list[object] = []
+        self._rcs_preview_frequency_hz = 12.5e9
         self._path_items: list[object] = []
         self._path_overlay_entries: list[dict] = []
         self._path_overlay_visible = False
@@ -124,7 +125,9 @@ class Scene3DView(gl.GLViewWidget):
         self._orthographic = True
         self.setCameraPosition(elevation=elevation, azimuth=azimuth)
 
-    def show_antenna_diagrams(self) -> None:
+    def show_antenna_diagrams(self, frequency_hz: float | None = None) -> None:
+        if frequency_hz is not None:
+            self._rcs_preview_frequency_hz = float(frequency_hz)
         self.hide_antenna_diagrams()
         if self._design is None:
             return
@@ -144,7 +147,7 @@ class Scene3DView(gl.GLViewWidget):
         self._add_scattering_point_diagrams()
 
     def _add_scattering_point_diagrams(self) -> None:
-        """Monostatic RCS lobe of every scattering point of the 3GPP sensing targets."""
+        """Monostatic RCS lobe of every scattering point of the sensing targets."""
         for obj in self._design.objects:
             if not is_sensing_target(obj):
                 continue
@@ -152,7 +155,8 @@ class Scene3DView(gl.GLViewWidget):
             if dimensions is None:
                 continue
             try:
-                meshes = _scattering_point_lobe_meshes(obj, dimensions)
+                meshes = _scattering_point_lobe_meshes(
+                    obj, dimensions, frequency_hz=self._rcs_preview_frequency_hz)
             except Exception as exc:  # noqa: BLE001 - a missing Sionna/GPU must not break the view
                 print(f"Scattering-point patterns unavailable for {obj.id}: {exc}")
                 continue
@@ -617,7 +621,7 @@ class Scene3DView(gl.GLViewWidget):
                 self._add_dynamic_item(item)
 
     def _add_sensing_target_meshes(self) -> None:
-        """Draw 3GPP sensing targets as translucent cuboids (or their optional mesh)."""
+        """Draw sensing targets as translucent cuboids (or their optional mesh)."""
         if self._design is None:
             return
         for obj in self._design.objects:
@@ -2297,8 +2301,9 @@ def _scattering_point_lobe_meshes(
     *,
     alpha_samples: int = 25,
     beta_samples: int = 48,
+    frequency_hz: float = 12.5e9,
 ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """One lobe mesh per scattering point of a 3GPP sensing target.
+    """One lobe mesh per scattering point of a sensing target.
 
     Each lobe is the monostatic RCS seen from every direction, normalized to the
     strongest value over all points of the target so that their relative
@@ -2312,6 +2317,9 @@ def _scattering_point_lobe_meshes(
         sensing_options(obj).model_type,
         dimensions,
         directions,
+        sensing_model=sensing_target_type(obj.object_name).model,
+        parameter_seed=sensing_options(obj).msc_parameter_seed,
+        frequency_hz=frequency_hz,
     )
     peak_dbsm = max(float(np.max(pattern.rcs_dbsm)) for pattern in patterns)
     radius_m = max(1.0, 0.6 * max(dimensions))

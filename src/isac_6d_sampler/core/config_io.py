@@ -161,6 +161,8 @@ def _sensing_target(data: dict[str, Any]) -> SensingTargetOptions:
         random_sigma_s=bool(data.get("random_sigma_s", False)),
         random_phases=bool(data.get("random_phases", False)),
         random_xpr=bool(data.get("random_xpr", False)),
+        random_cpr=bool(data.get("random_cpr", False)),
+        msc_parameter_seed=data.get("msc_parameter_seed", 0),
     )
 
 

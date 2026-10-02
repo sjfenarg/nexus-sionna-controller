@@ -43,6 +43,20 @@ Run the test suite:
 uv run pytest
 ```
 
+### MSC development
+
+The `msc-model-implementation-in-sionna` branch adds an MSC prototype with
+one or five scattering centers for humans, AGVs and cars. Install the extension
+into this repository's environment before using an MSC target:
+
+```powershell
+uv run --no-sync python scripts/install_msc_extension.py
+uv run --no-sync python scripts/run_msc.py gui
+```
+
+See [MSC model setup and API](docs/msc-model.md) for the supported Sionna version,
+target names, parameters, frequency workflow and validation commands.
+
 ## GUI
 
 Launch the GUI with:

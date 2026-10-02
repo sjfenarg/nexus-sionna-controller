@@ -436,7 +436,13 @@ def main() -> int:
             self.refresh()
 
         def show_antenna_diagrams(self):
-            self.view.show_antenna_diagrams()
+            try:
+                bands = parse_band_specs(self.band_specs.text())
+                frequency_hz = float(np.mean(np.concatenate([band.vector() for band in bands])))
+            except ValueError as exc:
+                self.log.append(f"Cannot preview RCS with the configured band: {exc}")
+                return
+            self.view.show_antenna_diagrams(frequency_hz=frequency_hz)
             QTimer.singleShot(10_000, self.view.hide_antenna_diagrams)
 
         def show_simulation_paths(self):
@@ -529,7 +535,7 @@ def main() -> int:
             prefix = object_name.split("_", maxsplit=1)[0].lower() or "object"
             orientation = (self.yaw.value(), self.pitch.value(), self.roll.value())
             target = sensing_target_type(object_name)
-            # Sionna places objects by their bounding-box center: rest 3GPP targets on the ground.
+            # Sionna places objects by their bounding-box center: rest sensing targets on the ground.
             position = (0.0, 0.0, target.dimensions_m[2] / 2.0 if target is not None else 0.75)
             obj = DynamicObject(
                 id=unique_entity_id(prefix, self._existing_entity_ids()),

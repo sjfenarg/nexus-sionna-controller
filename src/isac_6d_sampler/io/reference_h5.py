@@ -102,7 +102,7 @@ class ReferenceH5Writer:
             obj_group = objects.require_group(f"object{idx}")
             obj_group.attrs["id"] = obj.id
             obj_group.attrs["object_name"] = obj.object_name
-            # 3GPP sensing targets are absorbers: their response comes from scattering points only.
+            # Sensing targets are absorbers; their response comes from scattering points.
             material = None if sensing_target_type(obj.object_name) else material_spec_for_object_name(obj.object_name)
             if material is not None:
                 obj_group.attrs["material_prefix"] = material.object_prefix
@@ -119,9 +119,16 @@ class ReferenceH5Writer:
         if target is None:
             return
         options = sensing_options(obj)
-        obj_group.attrs["sensing_model"] = "3GPP TR 38.901 clause 7.9.2"
-        obj_group.attrs["tr38901_object_type"] = target.object_type
-        obj_group.attrs["tr38901_model_type"] = int(options.model_type)
+        obj_group.attrs["sensing_model"] = "MSC" if target.model == "msc" else "3GPP TR 38.901 clause 7.9.2"
+        obj_group.attrs["sensing_object_type"] = target.object_type
+        if target.model == "msc":
+            obj_group.attrs["msc_object_type"] = target.object_type
+            obj_group.attrs["msc_parameter_seed"] = options.msc_parameter_seed
+            obj_group.attrs["msc_calibrated"] = False
+            obj_group.attrs["random_cpr"] = bool(options.random_cpr)
+        else:
+            obj_group.attrs["tr38901_object_type"] = target.object_type
+            obj_group.attrs["tr38901_model_type"] = int(options.model_type)
         obj_group.attrs["random_sigma_s"] = bool(options.random_sigma_s)
         obj_group.attrs["random_phases"] = bool(options.random_phases)
         obj_group.attrs["random_xpr"] = bool(options.random_xpr)
@@ -178,6 +185,13 @@ class ReferenceH5Writer:
                 group.attrs["delay_oversampling"] = int(IFFT_GRIDDED_DELAY_OVERSAMPLING)
             samples = int(f_vector.size)
             delay_bin_width_s = 1.0 / max(bandwidth_hz, 1.0)
+            if (result.metadata.get("msc_frequency_resolved", False)
+                    and request.channel_mode in (ChannelMode.PDP_IFFT_EXACT, ChannelMode.PDP_IFFT_GRIDDED)):
+                group.attrs["ifft_renderer"] = "absolute_rf_sweep_ifft"
+                if "delay_oversampling" in group.attrs:
+                    del group.attrs["delay_oversampling"]
+                if samples > 1:
+                    delay_bin_width_s = 1.0 / (samples * float(f_vector[1] - f_vector[0]))
             group.attrs["delay_bin_width_s"] = delay_bin_width_s
             group.attrs["delay_window_s"] = samples * delay_bin_width_s
             _replace_dataset(

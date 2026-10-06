@@ -213,7 +213,7 @@ def sample_radiomap_grid(config: RadiomapConfig) -> np.ndarray:
     _validate_radiomap_grid(config)
     xs = np.arange(config.x_min, config.x_max + config.x_spacing * 0.5, config.x_spacing)
     ys = np.arange(config.y_min, config.y_max + config.y_spacing * 0.5, config.y_spacing)
-    return _radiomap_positions(xs, ys, config.height)
+    return _radiomap_positions(xs, ys, config.height, config)
 
 
 def radiomap_grid_shape(config: RadiomapConfig) -> tuple[int, int]:
@@ -232,7 +232,7 @@ def sample_radiomap_preview_grid(config: RadiomapConfig, max_points: int = 2500)
     stride = _preview_stride(x_points, y_points, max_points)
     xs = config.x_min + np.arange(0, x_points, stride, dtype=np.float64) * config.x_spacing
     ys = config.y_min + np.arange(0, y_points, stride, dtype=np.float64) * config.y_spacing
-    return _radiomap_positions(xs, ys, config.height), total_points
+    return _radiomap_positions(xs, ys, config.height, config), total_points
 
 
 def _validate_radiomap_grid(config: RadiomapConfig) -> None:
@@ -261,10 +261,21 @@ def _strided_count(points: int, stride: int) -> int:
     return int(np.ceil(points / stride))
 
 
-def _radiomap_positions(xs: np.ndarray, ys: np.ndarray, height: float) -> np.ndarray:
+def rotate_radiomap_xy(points: np.ndarray, config: RadiomapConfig) -> np.ndarray:
+    """Rotate XY coordinates around the center of the configured rectangle."""
+    points = np.asarray(points, dtype=np.float64)
+    angle = np.deg2rad(config.rotation_deg)
+    center = np.asarray([(config.x_min + config.x_max) / 2, (config.y_min + config.y_max) / 2])
+    offsets = points - center
+    cosine, sine = np.cos(angle), np.sin(angle)
+    return center + offsets @ np.asarray([[cosine, sine], [-sine, cosine]])
+
+
+def _radiomap_positions(xs: np.ndarray, ys: np.ndarray, height: float, config: RadiomapConfig) -> np.ndarray:
     xx, yy = np.meshgrid(xs, ys, indexing="xy")
     zz = np.full_like(xx, height, dtype=np.float64)
-    return np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+    xy = rotate_radiomap_xy(np.column_stack([xx.ravel(), yy.ravel()]), config)
+    return np.column_stack([xy, zz.ravel()])
 
 
 def _motion_profile(

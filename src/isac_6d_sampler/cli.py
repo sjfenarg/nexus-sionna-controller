@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rm-x-spacing", type=float)
     parser.add_argument("--rm-y-spacing", type=float)
     parser.add_argument("--rm-height", type=float)
+    parser.add_argument("--rm-rotation", type=float, help="Radiomap rotation in degrees around its center")
     parser.add_argument(
         "--object",
         action="append",
@@ -170,6 +171,8 @@ def _apply_overrides(request: SimulationRequest, args: argparse.Namespace) -> No
         request.scene.radiomap.y_spacing = args.rm_y_spacing
     if args.rm_height is not None:
         request.scene.radiomap.height = args.rm_height
+    if args.rm_rotation is not None:
+        request.scene.radiomap.rotation_deg = args.rm_rotation
     for spec in args.bs:
         request.scene.base_stations.append(_parse_bs_spec(spec))
     for spec in args.ue:

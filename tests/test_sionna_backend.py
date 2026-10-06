@@ -423,6 +423,7 @@ def test_frequency_domain_link_data_uses_cfr_and_caches_cir_for_path_viewer():
     assert path_vertices is None
     assert paths.cfr_kwargs["normalize_delays"] is False
     assert paths.cfr_kwargs["normalize"] is False
+    np.testing.assert_array_equal(paths.cfr_frequencies, [-0.5e9, 0.5e9])
 
 
 def test_default_bs_spacing_maps_to_half_wavelength_for_sionna_arrays():
@@ -776,6 +777,7 @@ class _FakeCfrOnlyPaths:
 
     def __init__(self):
         self.cfr_kwargs = None
+        self.cfr_frequencies = None
 
     def cir(self, **_kwargs):
         tau = np.zeros((1, 1, 1, 100, 1), dtype=np.float64)
@@ -785,6 +787,7 @@ class _FakeCfrOnlyPaths:
     def cfr(self, frequencies, **kwargs):
         self.cfr_kwargs = kwargs
         frequencies = np.asarray(frequencies, dtype=np.float64)
+        self.cfr_frequencies = frequencies.copy()
         return np.ones((1, 1, 1, 100, frequencies.size), dtype=np.complex64)
 
 

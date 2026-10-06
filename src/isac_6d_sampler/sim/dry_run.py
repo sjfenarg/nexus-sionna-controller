@@ -11,6 +11,7 @@ from isac_6d_sampler.sim.power import dbm_to_watt, field_amplitude_from_dbm
 
 from .planner import build_simulation_plan, position_for
 from .results import LinkResult, SimulationResult, TimeframeResult
+from .skipped import skipped_radiomap_timeframe
 
 
 class DryRunSimulator:
@@ -29,6 +30,9 @@ class DryRunSimulator:
         for tf_idx, timeframe in enumerate(plan.timeframes):
             if progress:
                 progress(tf_idx, len(plan.timeframes), f"Generating dry-run timeframe {tf_idx}")
+            if timeframe.metadata.get("radiomap_inside_building", False):
+                timeframes.append(skipped_radiomap_timeframe(timeframe, len(f_vector), request.channel_mode))
+                continue
             links: list[LinkResult] = []
             for link in timeframe.links:
                 distance = np.linalg.norm(

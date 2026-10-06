@@ -25,6 +25,17 @@ class SimulationWorker(QThread):
     def run(self) -> None:
         try:
             plan = build_simulation_plan(self.request.scene)
+            if self.request.scene.radiomap.enabled:
+                grid_points = int(plan.timeframes[0].metadata["radiomap_total_grid_points"])
+                skipped = sum(
+                    bool(frame.metadata.get("radiomap_inside_building", False))
+                    for frame in plan.timeframes[:grid_points]
+                )
+                self.progress.emit(
+                    0, len(plan.timeframes),
+                    f"Building check at {self.request.scene.radiomap.height:g} m: "
+                    f"{skipped} of {grid_points} grid points skipped",
+                )
 
             def emit_progress(i, n, msg):
                 if 0 <= int(i) < len(plan.timeframes):

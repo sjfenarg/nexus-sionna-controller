@@ -31,7 +31,7 @@ from isac_6d_sampler.core.sensing_targets import (
     sensing_target_dimensions,
     sensing_target_type,
 )
-from isac_6d_sampler.core.trajectories import normalized_bezier_handles, sample_radiomap_preview_grid, sample_trajectory
+from isac_6d_sampler.core.trajectories import normalized_bezier_handles, rotate_radiomap_xy, sample_radiomap_preview_grid, sample_trajectory
 
 
 _AXES = {
@@ -70,6 +70,7 @@ class Scene3DView(gl.GLViewWidget):
         on_trajectory_endpoint_transformed=None,
         on_trajectory_transform_started=None,
         on_radiomap_bounds_changed=None,
+        on_radiomap_rotation_changed=None,
         on_radiomap_transform_started=None,
         parent=None,
     ):
@@ -86,6 +87,7 @@ class Scene3DView(gl.GLViewWidget):
         self._on_trajectory_endpoint_transformed = on_trajectory_endpoint_transformed
         self._on_trajectory_transform_started = on_trajectory_transform_started
         self._on_radiomap_bounds_changed = on_radiomap_bounds_changed
+        self._on_radiomap_rotation_changed = on_radiomap_rotation_changed
         self._on_radiomap_transform_started = on_radiomap_transform_started
         self._items: list[object] = []
         self._dynamic_items: list[object] = []
@@ -276,6 +278,11 @@ class Scene3DView(gl.GLViewWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            state = self._begin_radiomap_rotation_drag(event.position().x(), event.position().y())
+            if state is not None:
+                self._drag_state = state
+                event.accept()
+                return
             state = self._begin_radiomap_corner_drag(event.position().x(), event.position().y())
             if state is not None:
                 self._drag_state = state
@@ -340,6 +347,12 @@ class Scene3DView(gl.GLViewWidget):
 
     def mouseMoveEvent(self, event):
         if self._drag_state is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if self._drag_state.get("target") == "radiomap_rotation":
+                rotation = self._drag_radiomap_rotation(event.position().x(), event.position().y(), self._drag_state)
+                if rotation is not None and self._on_radiomap_rotation_changed is not None:
+                    self._on_radiomap_rotation_changed(rotation)
+                event.accept()
+                return
             if self._drag_state.get("target") == "radiomap_corner":
                 bounds = self._drag_radiomap_corner(
                     event.position().x(),
@@ -529,13 +542,7 @@ class Scene3DView(gl.GLViewWidget):
                         for handle_in, handle_out in normalized_bezier_handles(entity.trajectory):
                             points.extend([handle_in, handle_out])
         if self._radiomap and self._radiomap.enabled:
-            z = self._radiomap.height
-            points.extend(
-                [
-                    (self._radiomap.x_min, self._radiomap.y_min, z),
-                    (self._radiomap.x_max, self._radiomap.y_max, z),
-                ]
-            )
+            points.extend(_radiomap_corners(self._radiomap)[:4])
         if not points:
             return None
         values = np.asarray(points, dtype=np.float64)
@@ -954,16 +961,7 @@ class Scene3DView(gl.GLViewWidget):
             return
         config = self._radiomap
         z = config.height
-        corners = np.asarray(
-            [
-                (config.x_min, config.y_min, z),
-                (config.x_max, config.y_min, z),
-                (config.x_max, config.y_max, z),
-                (config.x_min, config.y_max, z),
-                (config.x_min, config.y_min, z),
-            ],
-            dtype=np.float32,
-        )
+        corners = _radiomap_corners(config).astype(np.float32)
         surface_vertices = corners[:4]
         surface_faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
         surface_data = gl.MeshData(vertexes=surface_vertices, faces=surface_faces)
@@ -986,13 +984,7 @@ class Scene3DView(gl.GLViewWidget):
                 mode="line_strip",
             )
         )
-        handles = np.asarray(
-            [
-                (config.x_min, config.y_min, z),
-                (config.x_max, config.y_max, z),
-            ],
-            dtype=np.float32,
-        )
+        handles = corners[[0, 2]]
         self._add_dynamic_item(
             gl.GLScatterPlotItem(
                 pos=handles,
@@ -1001,6 +993,17 @@ class Scene3DView(gl.GLViewWidget):
                 pxMode=True,
             )
         )
+        center = np.asarray([(config.x_min + config.x_max) / 2, (config.y_min + config.y_max) / 2])
+        edge = rotate_radiomap_xy(np.asarray([[center[0], config.y_max]]), config)[0]
+        handle = _radiomap_rotation_handle(config)
+        self._add_dynamic_item(gl.GLLinePlotItem(
+            pos=np.asarray([[*edge, z], handle], dtype=np.float32),
+            color=(1.0, 0.55, 0.0, 1.0), width=2.0, mode="lines",
+        ))
+        self._add_dynamic_item(gl.GLScatterPlotItem(
+            pos=np.asarray([handle], dtype=np.float32),
+            color=(1.0, 0.55, 0.0, 1.0), size=16.0, pxMode=True,
+        ))
         try:
             preview, _total = sample_radiomap_preview_grid(config)
         except ValueError:
@@ -1052,14 +1055,48 @@ class Scene3DView(gl.GLViewWidget):
             return []
         return self._design.user_equipments
 
+    def _begin_radiomap_rotation_drag(self, x: float, y: float) -> dict | None:
+        config = self._radiomap
+        if config is None or not config.enabled:
+            return None
+        handle = _radiomap_rotation_handle(config)
+        screen_handle = self._project_to_screen(handle)
+        if screen_handle is None or _screen_distance((x, y), screen_handle) > 18.0:
+            return None
+        center = np.asarray([(config.x_min + config.x_max) / 2, (config.y_min + config.y_max) / 2, config.height])
+        screen_center = self._project_to_screen(center)
+        screen_x = self._project_to_screen(center + _AXES["x"])
+        screen_y = self._project_to_screen(center + _AXES["y"])
+        if screen_center is None or screen_x is None or screen_y is None:
+            return None
+        x_axis = _screen_unit_vector(screen_center, screen_x)
+        y_axis = _screen_unit_vector(screen_center, screen_y)
+        if x_axis is None or y_axis is None:
+            return None
+        offset = np.asarray([x, y], dtype=np.float64) - np.asarray(screen_center)
+        wx, wy = _screen_plane_components(offset, x_axis, y_axis)
+        return {
+            "target": "radiomap_rotation",
+            "screen_center": np.asarray(screen_center),
+            "screen_x_axis": x_axis,
+            "screen_y_axis": y_axis,
+            "start_pointer_angle": np.rad2deg(np.arctan2(wy, wx)),
+            "rotation_deg": config.rotation_deg,
+        }
+
+    def _drag_radiomap_rotation(self, x: float, y: float, state: dict) -> float:
+        offset = np.asarray([x, y], dtype=np.float64) - state["screen_center"]
+        wx, wy = _screen_plane_components(offset, state["screen_x_axis"], state["screen_y_axis"])
+        pointer_angle = np.rad2deg(np.arctan2(wy, wx))
+        delta = (pointer_angle - state["start_pointer_angle"] + 180.0) % 360.0 - 180.0
+        return float((state["rotation_deg"] + delta + 180.0) % 360.0 - 180.0)
+
     def _begin_radiomap_corner_drag(self, x: float, y: float) -> dict | None:
         config = self._radiomap
         if config is None or not config.enabled:
             return None
-        corners = {
-            "min": np.asarray([config.x_min, config.y_min, config.height], dtype=np.float64),
-            "max": np.asarray([config.x_max, config.y_max, config.height], dtype=np.float64),
-        }
+        rotated = _radiomap_corners(config)
+        corners = {"min": rotated[0], "max": rotated[2]}
         best_name = None
         best_distance = None
         for name, point in corners.items():
@@ -1073,15 +1110,19 @@ class Scene3DView(gl.GLViewWidget):
         if best_name is None:
             return None
         start = corners[best_name]
+        local_start = (config.x_min, config.y_min) if best_name == "min" else (config.x_max, config.y_max)
+        angle = np.deg2rad(config.rotation_deg)
+        local_x = np.asarray([np.cos(angle), np.sin(angle), 0.0])
+        local_y = np.asarray([-np.sin(angle), np.cos(angle), 0.0])
         screen_origin = self._project_to_screen(start)
-        screen_x = self._project_to_screen(start + _AXES["x"])
-        screen_y = self._project_to_screen(start + _AXES["y"])
+        screen_x = self._project_to_screen(start + local_x)
+        screen_y = self._project_to_screen(start + local_y)
         return {
             "target": "radiomap_corner",
             "corner": best_name,
             "mouse_start": np.asarray([x, y], dtype=np.float64),
-            "start_x": float(start[0]),
-            "start_y": float(start[1]),
+            "start_x": float(local_start[0]),
+            "start_y": float(local_start[1]),
             "x_min": float(config.x_min),
             "x_max": float(config.x_max),
             "y_min": float(config.y_min),
@@ -1985,6 +2026,23 @@ def _screen_pixels_to_world(
 def _radiomap_corner_world_per_pixel(config: RadiomapConfig) -> float:
     span = max(abs(float(config.x_max) - float(config.x_min)), abs(float(config.y_max) - float(config.y_min)), 10.0)
     return span / 500.0
+
+
+def _radiomap_corners(config: RadiomapConfig) -> np.ndarray:
+    xy = np.asarray([
+        [config.x_min, config.y_min], [config.x_max, config.y_min],
+        [config.x_max, config.y_max], [config.x_min, config.y_max],
+        [config.x_min, config.y_min],
+    ])
+    rotated = rotate_radiomap_xy(xy, config)
+    return np.column_stack([rotated, np.full(len(rotated), config.height)])
+
+
+def _radiomap_rotation_handle(config: RadiomapConfig) -> np.ndarray:
+    center_x = (config.x_min + config.x_max) / 2
+    offset = max(1.0, min(config.x_max - config.x_min, config.y_max - config.y_min) * 0.15)
+    xy = rotate_radiomap_xy(np.asarray([[center_x, config.y_max + offset]]), config)[0]
+    return np.asarray([*xy, config.height])
 
 
 def _trajectory_preview_positions(trajectory: TrajectorySpec) -> np.ndarray:

@@ -36,6 +36,7 @@ from isac_6d_sampler.sim.power import dbm_to_watt, field_amplitude_from_dbm
 from .materials import assign_calibrated_materials
 from .planner import LinkPlan, TimeframePlan, build_simulation_plan, orientation_for, position_for
 from .results import LinkResult, SimulationResult, TimeframeResult
+from .skipped import skipped_radiomap_timeframe
 
 ProgressCallback = Callable[[int, int, str], None]
 JOURNAL_HORN_PATTERN = "isac_horn_77_81"
@@ -101,6 +102,14 @@ class SionnaSimulator:
         batch_size = max(1, int(request.sionna.batch_timeframes))
         tf_idx = 0
         while tf_idx < len(plan.timeframes):
+            if plan.timeframes[tf_idx].metadata.get("radiomap_inside_building", False):
+                if progress:
+                    progress(tf_idx, len(plan.timeframes), f"Skipping radiomap point {tf_idx} inside building")
+                result_frames.append(skipped_radiomap_timeframe(
+                    plan.timeframes[tf_idx], len(frequency_vector), request.channel_mode,
+                ))
+                tf_idx += 1
+                continue
             chunk = _next_batchable_timeframe_chunk(plan.timeframes, tf_idx, batch_size)
             if progress:
                 end = tf_idx + len(chunk) - 1
@@ -978,6 +987,8 @@ def _next_batchable_timeframe_chunk(
     first = timeframes[start]
     chunk = [first]
     for timeframe in timeframes[start + 1 : start + requested_size]:
+        if timeframe.metadata.get("radiomap_inside_building", False):
+            break
         if not _same_object_state(first, timeframe):
             break
         chunk.append(timeframe)

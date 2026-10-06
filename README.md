@@ -63,7 +63,7 @@ The GUI lets you:
 - Add, select, move, and rotate BSs, UEs, and the car object.
 - Edit BS and UE antenna panels separately.
 - Use local transform gizmos for position/orientation and trajectory endpoints.
-- Configure radiomap bounds by dragging the two rectangle corners.
+- Configure radiomap bounds by dragging the two rectangle corners. Drag the orange handle to rotate the radiomap around its center, or enter an angle in the Rotation field.
 - Preview antenna diagrams in 3D.
 - Run simulations while moving trajectory entities through the currently computed timeframe.
 - Open a channel visualizer for stored or just-computed channels.
@@ -171,7 +171,9 @@ Radiomap mode replaces explicit UEs for the simulation with a generated UE grid:
 - The radiomap UE template defines antenna panel, pattern, polarization, and orientation.
 - If objects have trajectories, the full radiomap grid is generated for each object state.
 
-In the GUI, enabling radiomap shows draggable rectangle corners in the 3D view. Explicit UE entities are ignored by the simulation while radiomap is enabled.
+In the GUI, enabling radiomap shows draggable rectangle corners and a rotation handle in the 3D view. The radiomap grid rotates around its center; the saved HDF5 positions contain the rotated world coordinates, while x/y coordinate axes remain local to the grid. Explicit UE entities are ignored by the simulation while radiomap is enabled.
+
+Before solving a radiomap, the selected scenario's building meshes are checked at the configured radiomap height. Grid positions with a near-horizontal structural surface overhead are skipped. Their channel values are saved as `NaN`, and `radiomap_params/inside_building_mask` and `radiomap_params/valid_mask` retain the original grid indexing. The check excludes ground, roads, vegetation, and dynamic objects.
 
 ## 3GPP Sensing Targets
 

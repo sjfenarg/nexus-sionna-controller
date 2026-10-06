@@ -1,0 +1,659 @@
+{
+  "scene": {
+    "name": "Detailed 6D Map",
+    "scenario_path": "scenarios\\Detailed 6D Map\\Detailed 6D Map.xml",
+    "description": "Detailed 6D Map loaded with antenna positions from meas/nexus_trials.h5. BS uses the measured QOM-ST-2-18 omni pattern; UEs use the measured powerLog pattern. UE6 and UE7 use opposite XY yaw while preserving the BS-pointing tilt.",
+    "base_stations": [
+      {
+        "id": "bs0",
+        "position": [
+          90.9702628185773,
+          -228.6338150711929,
+          13.902083819134832
+        ],
+        "orientation_rad": [
+          2.574174491974899,
+          0.34464551722486153,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 10,
+          "pattern": "qom_st_2_18_omni",
+          "polarization": "V",
+          "vertical_spacing_m": 0.01,
+          "horizontal_spacing_m": 0.01,
+          "element_diagram": "qom_st_2_18_omni",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        }
+      }
+    ],
+    "user_equipments": [
+      {
+        "id": "ue0",
+        "position": [
+          64.95625472931727,
+          -203.826920000312,
+          1.16
+        ],
+        "orientation_rad": [
+          -0.7140523513150198,
+          -0.3189878613054665,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              64.95625472931727,
+              -203.826920000312,
+              1.16
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue1",
+        "position": [
+          67.10427902592134,
+          -201.93448000034408,
+          1.0
+        ],
+        "orientation_rad": [
+          -0.7974146156496512,
+          -0.3255294963656675,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              67.10427902592134,
+              -201.93448000034408,
+              1.0
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue2",
+        "position": [
+          65.64362250423135,
+          -204.04956000054085,
+          1.16
+        ],
+        "orientation_rad": [
+          -0.7224246117824932,
+          -0.3248493900592693,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              65.64362250423135,
+              -204.04956000054085,
+              1.16
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue3",
+        "position": [
+          68.0494097164258,
+          -202.2684400002919,
+          1.0
+        ],
+        "orientation_rad": [
+          -0.8107688163004751,
+          -0.3336930643501661,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              68.0494097164258,
+              -202.2684400002919,
+              1.0
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue4",
+        "position": [
+          62.29270460152765,
+          -204.71748000043647,
+          1.16
+        ],
+        "orientation_rad": [
+          -0.6465656188864338,
+          -0.30638214523506047,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              62.29270460152765,
+              -204.71748000043647,
+              1.16
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue5",
+        "position": [
+          62.03494168593249,
+          -201.93448000034408,
+          1.0
+        ],
+        "orientation_rad": [
+          -0.7012687437959297,
+          -0.29543846859441014,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              62.03494168593249,
+              -201.93448000034408,
+              1.0
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue6",
+        "position": [
+          62.29270460152765,
+          -204.71748000043647,
+          1.16
+        ],
+        "orientation_rad": [
+          2.4950270347033587,
+          -0.30638214523506047,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              62.29270460152765,
+              -204.71748000043647,
+              1.16
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue7",
+        "position": [
+          62.03494168593249,
+          -201.93448000034408,
+          1.0
+        ],
+        "orientation_rad": [
+          2.4403239097938636,
+          -0.29543846859441014,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              62.03494168593249,
+              -201.93448000034408,
+              1.0
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue8",
+        "position": [
+          56.5359994866295,
+          -209.05896000054895,
+          1.16
+        ],
+        "orientation_rad": [
+          -0.46528511188150246,
+          -0.2867512354499074,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              56.5359994866295,
+              -209.05896000054895,
+              1.16
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      },
+      {
+        "id": "ue9",
+        "position": [
+          52.75547672460213,
+          -213.06647999992265,
+          1.0
+        ],
+        "orientation_rad": [
+          -0.3342198033799293,
+          -0.2774264110943922,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "powerLog",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "powerLog",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              52.75547672460213,
+              -213.06647999992265,
+              1.0
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      }
+    ],
+    "objects": [],
+    "radiomap": {
+      "enabled": true,
+      "x_min": -28.123,
+      "x_max": 109.205,
+      "y_min": -260.04,
+      "y_max": -171.842,
+      "x_spacing": 1.0,
+      "y_spacing": 1.0,
+      "height": 1.5,
+      "rotation_deg": -20.0,
+      "ue_template": {
+        "id": "rm_ue",
+        "position": [
+          0.0,
+          0.0,
+          1.5
+        ],
+        "orientation_rad": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "panel": {
+          "rows": 1,
+          "cols": 1,
+          "pattern": "iso",
+          "polarization": "V",
+          "vertical_spacing_m": 0.0,
+          "horizontal_spacing_m": 0.0,
+          "element_diagram": "iso",
+          "orientation_rad": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "v_pol_vector": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "h_pol_vector": null
+        },
+        "trajectory": {
+          "kind": "static",
+          "points": [
+            [
+              0.0,
+              0.0,
+              1.5
+            ]
+          ],
+          "bezier_handles": [],
+          "orientation_rad_points": [],
+          "samples": 1,
+          "start_static_fraction": 0.0,
+          "end_static_fraction": 0.0,
+          "easing": "linear"
+        }
+      }
+    },
+    "timeframe_interval_s": null
+  },
+  "bands": [
+    {
+      "name": "h5_subband_0_3.85GHz_100.08MHz_step_360kHz",
+      "start_hz": 3799960000.0,
+      "stop_hz": 3900040000.0,
+      "points": 279
+    },
+    {
+      "name": "h5_subband_1_7.00GHz_400.32MHz_step_720kHz",
+      "start_hz": 6799840000.0,
+      "stop_hz": 7200160000.0,
+      "points": 557
+    },
+    {
+      "name": "h5_subband_2_7.50GHz_400.32MHz_step_720kHz",
+      "start_hz": 7299840000.0,
+      "stop_hz": 7700160000.0,
+      "points": 557
+    },
+    {
+      "name": "h5_subband_3_10.25GHz_400.32MHz_step_720kHz",
+      "start_hz": 10049800000.0,
+      "stop_hz": 10450200000.0,
+      "points": 557
+    },
+    {
+      "name": "h5_subband_4_13.00GHz_400.32MHz_step_720kHz",
+      "start_hz": 12799800000.0,
+      "stop_hz": 13200200000.0,
+      "points": 557
+    },
+    {
+      "name": "h5_subband_5_15.00GHz_400.32MHz_step_720kHz",
+      "start_hz": 14799800000.0,
+      "stop_hz": 15200200000.0,
+      "points": 557
+    }
+  ],
+  "channel_mode": "frequency_domain",
+  "sionna": {
+    "tx_power_dbm": 44.0,
+    "samples_per_src": 500000,
+    "max_depth": 3,
+    "max_num_paths_per_src": 100000,
+    "seed": null,
+    "los": true,
+    "specular_reflection": true,
+    "diffuse_reflection": true,
+    "refraction": false,
+    "synthetic_array": false,
+    "merge_shapes": false,
+    "use_gpu": true,
+    "batch_timeframes": 1,
+    "max_timeframes": 100000,
+    "ue_ue_links": false,
+    "sensing_channel": "combined",
+    "rcs_max_depth": null,
+    "rcs_samples_per_sp": 200000,
+    "rcs_buffer_size_per_sp": 200000
+  },
+  "output_dir": "output\\hdf5_antennas_powerlog",
+  "sample_id": "s000",
+  "dry_run": false
+}

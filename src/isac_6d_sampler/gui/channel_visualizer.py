@@ -214,6 +214,12 @@ class ChannelVisualizerWindow(QMainWindow):
             self.curve.setData([], [])
             self.status.setText("No channel selected")
             return
+        timeframe = self._selected_timeframe()
+        if timeframe is not None and timeframe.metadata.get("radiomap_inside_building", False):
+            self.curve.setData([], [])
+            self.los_marker.setVisible(False)
+            self.status.setText("Radiomap point skipped: inside building")
+            return
         domain = str(self.domain.currentData())
         x_mode = str(self.x_axis.currentData())
         x, y_db, x_label, x_units, note = channel_power_trace(

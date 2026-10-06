@@ -141,6 +141,7 @@ class RadiomapConfig:
     x_spacing: float = 1.0
     y_spacing: float = 1.0
     height: float = 1.5
+    rotation_deg: float = 0.0
     ue_template: UserEquipment = field(default_factory=lambda: UserEquipment(id="rm_ue"))
 
 

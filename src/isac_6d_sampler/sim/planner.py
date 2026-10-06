@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from isac_6d_sampler.core.model import AntennaPanel, BaseStation, SceneDesign, UserEquipment, Vector3
+from isac_6d_sampler.core.radiomap_occupancy import radiomap_inside_building_mask
 from isac_6d_sampler.core.trajectories import (
     radiomap_grid_shape,
     sample_orientations,
@@ -137,6 +138,7 @@ def _timeframes(
     base_station_positions = {entity.id: entity.position for entity in scene.base_stations}
     if scene.radiomap.enabled:
         radiomap_positions = sample_radiomap_grid(scene.radiomap)
+        inside_building = radiomap_inside_building_mask(scene.scenario_path, scene.radiomap)
         x_points, _ = radiomap_grid_shape(scene.radiomap)
         ue = user_equipments[0]
         sampled_objects = {
@@ -179,6 +181,7 @@ def _timeframes(
                             "radiomap_x_index": grid_idx % x_points,
                             "radiomap_y_index": grid_idx // x_points,
                             "radiomap_total_grid_points": int(radiomap_positions.shape[0]),
+                            "radiomap_inside_building": bool(inside_building[grid_idx]),
                             "radiomap_object_state_index": object_idx,
                             "radiomap_object_state_count": object_frame_count,
                         },

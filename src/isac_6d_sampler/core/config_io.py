@@ -175,6 +175,7 @@ def _radiomap(data: dict[str, Any]) -> RadiomapConfig:
         x_spacing=float(data.get("x_spacing", 1.0)),
         y_spacing=float(data.get("y_spacing", 1.0)),
         height=float(data.get("height", 1.5)),
+        rotation_deg=float(data.get("rotation_deg", 0.0)),
         ue_template=_ue(template_data),
     )
 

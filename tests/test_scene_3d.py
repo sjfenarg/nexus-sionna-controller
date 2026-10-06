@@ -431,3 +431,70 @@ def test_configured_external_obj_mesh_is_dynamic():
 
     assert view._static_meshes() == (wall,)
     assert view._dynamic_meshes() == (drone,)
+
+
+def test_sensing_targets_are_previewed_as_translucent_cuboids(monkeypatch):
+    module = __import__("isac_6d_sampler.gui.scene_3d", fromlist=["Scene3DView"])
+    added = []
+
+    class DummyView:
+        _add_sensing_target_meshes = module.Scene3DView._add_sensing_target_meshes
+        _sensing_target_geometry = module.Scene3DView._sensing_target_geometry
+        _asset = None
+        _design = SceneDesign(
+            objects=[
+                DynamicObject(id="human0", object_name="HUMAN_3GPP", position=(1.0, 2.0, 0.875)),
+                DynamicObject(id="car0", object_name="CAR_obj"),
+            ]
+        )
+
+        def _add_dynamic_item(self, item):
+            added.append(item)
+
+    monkeypatch.setattr(module.gl, "GLMeshItem", lambda **kwargs: kwargs)
+
+    DummyView()._add_sensing_target_meshes()
+
+    assert len(added) == 1
+    vertices = added[0]["meshdata"].vertexes()
+    np.testing.assert_allclose(vertices.min(axis=0), [0.75, 1.75, 0.0], atol=1e-6)
+    np.testing.assert_allclose(vertices.max(axis=0), [1.25, 2.25, 1.75], atol=1e-6)
+    assert added[0]["glOptions"] == "translucent"
+
+
+def test_scattering_point_lobes_follow_target_pose(monkeypatch):
+    from isac_6d_sampler.core.model import SensingTargetOptions
+    from isac_6d_sampler.gui.scene_3d import _diagram_local_directions, _scattering_point_lobe_meshes
+    from isac_6d_sampler.sim import rcs_patterns
+
+    calls = []
+
+    def fake_patterns(object_type, model_type, dimensions, directions):
+        calls.append((object_type, model_type, dimensions))
+        # Strongest towards local +x for the front point, isotropic 10 dB weaker for the roof.
+        front = np.where(directions[:, 0] > 0.99, 10.0, -40.0)
+        roof = np.zeros(directions.shape[0])
+        return (
+            rcs_patterns.ScatteringPointPattern((2.5, 0.0, 0.0), front),
+            rcs_patterns.ScatteringPointPattern((0.0, 0.0, 0.8), roof),
+        )
+
+    monkeypatch.setattr(rcs_patterns, "monostatic_scattering_patterns", fake_patterns)
+    car = DynamicObject(
+        id="car0",
+        object_name="CAR_3GPP",
+        position=(10.0, 0.0, 0.8),
+        orientation_rad=(np.pi / 2, 0.0, 0.0),
+        sensing=SensingTargetOptions(model_type=1),
+    )
+
+    front_mesh, roof_mesh = _scattering_point_lobe_meshes(car, (5.0, 2.0, 1.6))
+
+    assert calls == [("vehicle-multi-sp", 1, (5.0, 2.0, 1.6))]
+    directions, _ = _diagram_local_directions(25, 48)
+    peak = int(np.argmax(directions[:, 0]))
+    radius = 0.6 * 5.0
+    # Yaw by 90 degrees: the front point sits at +y and its lobe points along +y.
+    np.testing.assert_allclose(front_mesh[0][peak], (10.0, 2.5 + radius, 0.8), atol=1e-6)
+    # The roof point is 10 dB below the target peak: 2/3 of the radius with a 30 dB floor.
+    np.testing.assert_allclose(roof_mesh[0][peak], (10.0, radius * 2.0 / 3.0, 1.6), atol=1e-6)

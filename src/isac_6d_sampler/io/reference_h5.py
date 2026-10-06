@@ -11,7 +11,7 @@ import numpy as np
 from isac_6d_sampler.core.antenna_patterns import antenna_pattern_spec
 from isac_6d_sampler.core.model import AntennaPanel, ChannelMode, SimulationRequest, TrajectorySpec
 from isac_6d_sampler.core.sensing_targets import sensing_options, sensing_target_dimensions, sensing_target_type
-from isac_6d_sampler.core.trajectories import sample_radiomap_grid
+from isac_6d_sampler.core.trajectories import radiomap_grid_shape, sample_radiomap_grid
 from isac_6d_sampler.sim.channel import IFFT_GRIDDED_DELAY_OVERSAMPLING
 from isac_6d_sampler.sim.materials import (
     calibrated_material_specs,
@@ -111,7 +111,7 @@ class ReferenceH5Writer:
             _replace_dataset(obj_group, "orientation", np.asarray(obj.orientation_rad, dtype=np.float64))
             self._write_sensing_target_params(obj_group, obj)
         self._write_trajectory_params(params, request, user_equipments)
-        self._write_radiomap_params(params, request, user_equipments)
+        self._write_radiomap_params(params, request, result, user_equipments)
 
     def _write_sensing_target_params(self, obj_group, obj) -> None:
         target = sensing_target_type(obj.object_name)
@@ -278,7 +278,7 @@ class ReferenceH5Writer:
                 np.asarray(trajectory.orientation_rad_points, dtype=np.float64),
             )
 
-    def _write_radiomap_params(self, params, request: SimulationRequest, user_equipments) -> None:
+    def _write_radiomap_params(self, params, request: SimulationRequest, result: SimulationResult, user_equipments) -> None:
         radiomap = request.scene.radiomap
         group = params.require_group("radiomap_params")
         group.attrs["enabled"] = bool(radiomap.enabled)
@@ -289,16 +289,28 @@ class ReferenceH5Writer:
         group.attrs["x_spacing"] = float(radiomap.x_spacing)
         group.attrs["y_spacing"] = float(radiomap.y_spacing)
         group.attrs["height"] = float(radiomap.height)
+        group.attrs["rotation_deg"] = float(radiomap.rotation_deg)
         group.attrs["ue_template_id"] = user_equipments[0].id if radiomap.enabled and user_equipments else radiomap.ue_template.id
         if radiomap.enabled:
             positions = sample_radiomap_grid(radiomap)
-            xs = np.unique(positions[:, 0])
-            ys = np.unique(positions[:, 1])
-            group.attrs["x_points"] = int(xs.size)
-            group.attrs["y_points"] = int(ys.size)
+            x_points, y_points = radiomap_grid_shape(radiomap)
+            xs = radiomap.x_min + np.arange(x_points) * radiomap.x_spacing
+            ys = radiomap.y_min + np.arange(y_points) * radiomap.y_spacing
+            group.attrs["x_points"] = x_points
+            group.attrs["y_points"] = y_points
             _replace_dataset(group, "x_coordinates", xs.astype(np.float64))
             _replace_dataset(group, "y_coordinates", ys.astype(np.float64))
             _replace_dataset(group, "positions", positions.astype(np.float64))
+            inside = np.asarray([
+                bool(frame.metadata.get("radiomap_inside_building", False))
+                for frame in result.timeframes[:len(positions)]
+            ], dtype=bool)
+            if len(inside) != len(positions):
+                raise ValueError("Radiomap result is missing grid timeframes")
+            group.attrs["occupancy_method"] = "near_horizontal_structural_surface_overhead"
+            group.attrs["skipped_inside_building_points"] = int(np.count_nonzero(inside))
+            _replace_dataset(group, "inside_building_mask", inside)
+            _replace_dataset(group, "valid_mask", ~inside)
 
     def _write_antenna(self, group, panel: AntennaPanel, position, orientation, name: str) -> None:
         spec = antenna_pattern_spec(panel.pattern)

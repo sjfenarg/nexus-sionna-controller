@@ -102,6 +102,7 @@ def main() -> int:
                 on_trajectory_endpoint_transformed=self._transform_trajectory_endpoint_from_view,
                 on_trajectory_transform_started=self._begin_view_transform,
                 on_radiomap_bounds_changed=self._set_radiomap_bounds_from_view,
+                on_radiomap_rotation_changed=self._set_radiomap_rotation_from_view,
             )
             undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
             undo_shortcut.activated.connect(self.undo)
@@ -225,6 +226,8 @@ def main() -> int:
             self.rm_x_spacing = _double_spin(0.05, 100.0, 1.0)
             self.rm_y_spacing = _double_spin(0.05, 100.0, 1.0)
             self.rm_height = _double_spin(-100.0, 100.0, 1.5)
+            self.rm_rotation = _double_spin(-360.0, 360.0, 0.0, decimals=1)
+            self.rm_rotation.setSuffix("°")
 
             self.progress = QProgressBar()
             self.log = QTextEdit()
@@ -358,6 +361,7 @@ def main() -> int:
                     ("X spacing", self.rm_x_spacing),
                     ("Y spacing", self.rm_y_spacing),
                     ("Height", self.rm_height),
+                    ("Rotation", self.rm_rotation),
                 ],
                 object_name="config_section_radiomap",
             )
@@ -563,6 +567,7 @@ def main() -> int:
                 self.rm_x_spacing,
                 self.rm_y_spacing,
                 self.rm_height,
+                self.rm_rotation,
             ):
                 control.valueChanged.connect(lambda *_: None if self._syncing_controls else self.refresh(reset_camera=False))
 
@@ -656,6 +661,15 @@ def main() -> int:
                 self.rm_x_max.setValue(x1)
                 self.rm_y_min.setValue(y0)
                 self.rm_y_max.setValue(y1)
+            finally:
+                self._syncing_controls = was_syncing
+            self.refresh(reset_camera=False)
+
+        def _set_radiomap_rotation_from_view(self, rotation_deg: float):
+            was_syncing = self._syncing_controls
+            self._syncing_controls = True
+            try:
+                self.rm_rotation.setValue(rotation_deg)
             finally:
                 self._syncing_controls = was_syncing
             self.refresh(reset_camera=False)
@@ -1357,6 +1371,7 @@ def main() -> int:
                 x_spacing=self.rm_x_spacing.value(),
                 y_spacing=self.rm_y_spacing.value(),
                 height=self.rm_height.value(),
+                rotation_deg=self.rm_rotation.value(),
                 ue_template=self._radiomap_template_from_controls(apply_controls=False),
             )
 
@@ -1424,6 +1439,7 @@ def main() -> int:
             self.rm_x_spacing.setValue(request.scene.radiomap.x_spacing)
             self.rm_y_spacing.setValue(request.scene.radiomap.y_spacing)
             self.rm_height.setValue(request.scene.radiomap.height)
+            self.rm_rotation.setValue(request.scene.radiomap.rotation_deg)
             self._set_radiomap_template_controls(request.scene.radiomap.ue_template)
             self._syncing_controls = True
             try:

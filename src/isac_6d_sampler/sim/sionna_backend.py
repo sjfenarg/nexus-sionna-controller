@@ -623,17 +623,20 @@ def _radiomap_bs_monostatic_cache_key(ref: TimeframeLinkRef) -> tuple | None:
 
 
 def _copy_cached_link_result(cached: LinkResult, link: LinkPlan) -> LinkResult:
+    # The BS monostatic response is independent of the moving radiomap probe.
+    # Share its immutable arrays instead of copying them at every grid point.
+    cached.h.setflags(write=False)
+    for value in cached.metadata.values():
+        if isinstance(value, np.ndarray):
+            value.setflags(write=False)
     return LinkResult(
         rx_index=link.rx_index,
         tx_index=link.tx_index,
         rx_id=link.rx.id,
         tx_id=link.tx.id,
-        h=np.array(cached.h, copy=True),
+        h=cached.h,
         timestamp=cached.timestamp,
-        metadata={
-            key: np.array(value, copy=True) if isinstance(value, np.ndarray) else value
-            for key, value in cached.metadata.items()
-        },
+        metadata=dict(cached.metadata),
     )
 
 
@@ -654,6 +657,10 @@ def _paths_to_link_data(
         h = _paths_cfr_chunked(paths, np.asarray(paths.tau), baseband_frequencies)
         h = _slice_link_array(np.asarray(h), rx_local_index, tx_local_index)
         h = h * field_amplitude_from_dbm(request.sionna.tx_power_dbm)
+        # Frequency-domain radiomap HDF5 writes H only. Retaining the CIR and
+        # path geometry for thousands of grid points can exhaust RAM.
+        if request.scene.radiomap.enabled:
+            return _reshape_h_for_reference(h, link).astype(np.complex64), None, None, None
         a, tau = paths.cir(normalize_delays=False, out_type="numpy")
         delays = _slice_link_array(np.asarray(tau), rx_local_index, tx_local_index)
         coeffs = _slice_link_array(np.asarray(a), rx_local_index, tx_local_index)

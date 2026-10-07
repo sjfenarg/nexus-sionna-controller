@@ -59,7 +59,10 @@ def estimate_request_size(request: SimulationRequest) -> RequestSizeEstimate:
         )
 
     device_count = active_ue_count + bs_count
-    links_per_timeframe = active_ue_count + (2 * active_ue_count * bs_count)
+    links_per_timeframe = (
+        active_ue_count + bs_count + (2 * active_ue_count * bs_count)
+        + (active_ue_count * (active_ue_count - 1) if request.sionna.ue_ue_links else 0)
+    )
     channel_dataset_count = timeframe_count * links_per_timeframe
     batch_timeframes = max(1, int(request.sionna.batch_timeframes))
     timeframe_batches = math.ceil(timeframe_count / batch_timeframes)

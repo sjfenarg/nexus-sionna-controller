@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
 
 import numpy as np
 
@@ -29,12 +30,16 @@ def skipped_radiomap_timeframe(
             tx_index=link.tx_index,
             rx_id=link.rx.id,
             tx_id=link.tx.id,
-            h=np.full((*shape, sample_count), np.nan + 1j * np.nan, dtype=np.complex64),
+            h=_shared_nan_channel((*shape, sample_count)),
             timestamp=datetime.now(timezone.utc).isoformat(),
-            metadata={
-                "path_delays_s": np.full((*shape, 1), np.nan, dtype=np.float64),
-                "path_coefficients": np.full((*shape, 1), np.nan + 1j * np.nan, dtype=np.complex64),
-            },
+            metadata=(
+                {}
+                if channel_mode == ChannelMode.FREQUENCY_DOMAIN
+                else {
+                    "path_delays_s": _shared_nan_delays((*shape, 1)),
+                    "path_coefficients": _shared_nan_channel((*shape, 1)),
+                }
+            ),
         ))
     metadata = {
         **timeframe.metadata,
@@ -46,3 +51,17 @@ def skipped_radiomap_timeframe(
     if timeframe.object_velocities:
         metadata["object_velocities"] = timeframe.object_velocities
     return TimeframeResult(name=timeframe.name, links=links, metadata=metadata)
+
+
+@lru_cache(maxsize=32)
+def _shared_nan_channel(shape: tuple[int, ...]) -> np.ndarray:
+    values = np.full(shape, np.nan + 1j * np.nan, dtype=np.complex64)
+    values.setflags(write=False)
+    return values
+
+
+@lru_cache(maxsize=32)
+def _shared_nan_delays(shape: tuple[int, ...]) -> np.ndarray:
+    values = np.full(shape, np.nan, dtype=np.float64)
+    values.setflags(write=False)
+    return values

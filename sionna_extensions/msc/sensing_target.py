@@ -16,7 +16,7 @@ class MSCSensingTarget(TR38901SensingTarget):
 
     Vehicle/AGV templates preserve TR38901 size, positions and point frames.
     A five-point human is an additional cuboid template; TR38901 has only one.
-    Caller-supplied center parameters and polarization laws replace prototypes.
+    Caller-supplied center parameters replace prototypes. Only the VV response is modeled.
     center_positions accepts any nonempty (P, 3) target-frame constellation in
     meters. center_orientations contains Sionna Euler angles in radians; normal
     and shaping_axis parameters are expressed in each center frame. With custom
@@ -24,9 +24,11 @@ class MSCSensingTarget(TR38901SensingTarget):
     """
 
     def __init__(self, name, object_type="vehicle-multi-sp", parameter_seed=0,
-                 frequency_hz=12.5e9, parameters=None, polarization_laws=None,
+                 frequency_hz=12.5e9, parameters=None,
                  random_phases=False, random_xpr=False, random_cpr=False,
                  center_positions=None, center_orientations=None, **geometry):
+        if random_phases or random_xpr or random_cpr:
+            raise ValueError("MSC supports deterministic VV only; disable polarization randomization")
         allowed = {"human", "human-single-sp", "human-multi-sp", "vehicle-single-sp",
                    "vehicle-multi-sp", "agv-single-sp", "agv-multi-sp"}
         if object_type not in allowed:
@@ -62,14 +64,13 @@ class MSCSensingTarget(TR38901SensingTarget):
                 raise ValueError("center_orientations must have shape (P, 3), in radians")
             orientations = mi.Point3f(custom.T)
         count = np.asarray(positions.numpy()).shape[-1]
-        defaults, laws = placeholder_parameters(count, parameter_seed, normals)
+        defaults = placeholder_parameters(count, parameter_seed, normals)
         parameters = tuple(parameters) if parameters is not None else defaults
         if len(parameters) != count:
             raise ValueError(f"Expected {count} center parameter sets")
         self._object_type = object_type
         self._scattering_model = MSCScatteringModel(
-            object_type, positions, orientations, parameters, polarization_laws or laws,
-            parameter_seed, frequency_hz, random_phases, random_xpr, random_cpr)
+            object_type, positions, orientations, parameters, parameter_seed, frequency_hz)
 
     def clone(self, name=None, as_mesh=False, props=None):
         mesh = clone_mesh(self.mi_mesh, name=name, props=props)

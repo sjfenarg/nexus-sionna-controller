@@ -9,9 +9,10 @@ from datetime import datetime
 from importlib.metadata import distribution, version
 from pathlib import Path
 import shutil
+import re
 
 REPO = Path(__file__).resolve().parents[1]
-EXPORT = "\n# MSC extension (managed by install_msc_extension.py)\nfrom .msc import (MSCRCS, MSCCPM, MSCScatteringModel, MSCSensingTarget,\n                  MSCCenterParameters, MSCPolarizationParameters)\n"
+EXPORT = "\n# MSC extension (managed by install_msc_extension.py)\nfrom .msc import (MSCRCS, MSCCPM, MSCScatteringModel, MSCSensingTarget,\n                  MSCCenterParameters)\n"
 ANCHOR = "        # Generates sources and targets positions and orientations."
 HOOK = """        # MSC extension: bind frequency-dependent models to the scene carrier.
         for target in scene.sensing_targets.values():
@@ -52,8 +53,8 @@ def install():
         shutil.copytree(rcs / "msc", backup / "msc")
     shutil.copytree(REPO / "sionna_extensions" / "msc", rcs / "msc", dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    if "# MSC extension (managed" not in init_text:
-        init_path.write_text(init_text.rstrip() + "\n" + EXPORT, encoding="utf-8")
+    init_text = re.sub(r"\n# MSC extension \(managed[^\n]*\nfrom \.msc import \([\s\S]*?\)\n?", "", init_text)
+    init_path.write_text(init_text.rstrip() + "\n" + EXPORT, encoding="utf-8")
     marker = "        # MSC extension: bind frequency"
     if marker in solver_text:
         start, end = solver_text.index(marker), solver_text.index(ANCHOR)

@@ -24,13 +24,13 @@ common reference differ by a common phase only for the same VV target response.
 Frequency-resolved controller output reruns the solver at each RF frequency;
 carrier CIR/path-bin outputs freeze aperture amplitudes at the carrier.
 
-Polarization ratios use a shared target realization, unit VV, independent cross
-ratio draws, and positive HH/VV CPR. This is a scalar-profile approximation to the
-paper's effective whole-response model. Direction-dependent polarization bases,
-per-path mode classification and multipath can prevent exact whole-response power
-ratios. Frequency-subband law selection and spatially correlated dynamic
-polarization are not implemented. Do not interpret shared center CPMs as fitted
-center-specific polarimetry.
+MSC is VV-only. The Sionna Jones adapter has a unit VV entry and zero VH,
+HV and HH entries in the scattering-point basis. No random polarization law or
+polarization ratio is evaluated or exported. The controller disables the generic
+polarization randomization options for MSC (they still apply to 3GPP targets).
+Direct MSC API calls requesting random polarization fail explicitly. Rotated
+antenna/point bases and intervening propagation still require care: this adapter
+is a VV projection in the point basis, not a calibrated full polarimetric model.
 
 All default parameters remain uncalibrated. The manuscript contains unresolved
 wording: it mentions a variable exponent although the equation specifies 2, and

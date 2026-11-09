@@ -49,22 +49,6 @@ class MSCCenterParameters:
             raise ValueError("normal must be nonzero")
 
 
-@dataclass(frozen=True)
-class MSCPolarizationParameters:
-    """Whole-target lognormal power-ratio laws; HH/VV CPR has a positive sign."""
-
-    xpr_mean_db: float = 12.0
-    xpr_std_db: float = 3.0
-    cpr_mean_db: float = -2.0
-    cpr_std_db: float = 2.0
-
-    def __post_init__(self):
-        if not all(math.isfinite(getattr(self, f.name)) for f in fields(self)):
-            raise ValueError("polarization parameters must be finite")
-        if self.xpr_std_db < 0 or self.cpr_std_db < 0:
-            raise ValueError("ratio standard deviations must be non-negative")
-
-
 def placeholder_parameters(count, seed, normals):
     """Fixed random prototypes: repeated solves do not regenerate the kernels."""
     rng = np.random.default_rng(seed)
@@ -81,12 +65,4 @@ def placeholder_parameters(count, seed, normals):
             normal=tuple(normals[i]),
         ) for i in range(count)
     )
-    laws = {
-        mode: MSCPolarizationParameters(
-            xpr_mean_db=float(rng.uniform(6, 20)),
-            xpr_std_db=float(rng.uniform(1, 5)),
-            cpr_mean_db=float(rng.uniform(-5, 3)),
-            cpr_std_db=float(rng.uniform(1, 3)),
-        ) for mode in ("monostatic", "bistatic")
-    }
-    return centers, laws
+    return centers

@@ -440,7 +440,7 @@ class SionnaSimulator:
                 target_class = MSCSensingTarget
                 model_options = {"parameter_seed": options.msc_parameter_seed,
                                  "frequency_hz": float(scene.frequency[0]),
-                                 "random_cpr": options.random_cpr}
+                                 "random_cpr": False, "random_phases": False, "random_xpr": False}
             geometry: dict[str, object] = {}
             if options.mesh:
                 mesh_path = object_mesh_path(objects_root, options.mesh)
@@ -456,8 +456,8 @@ class SionnaSimulator:
                     object_type=catalog.object_type,
                     position=_vector3_for_mitsuba(obj.position),
                     orientation=_vector3_for_mitsuba(obj.orientation_rad),
-                    random_phases=options.random_phases,
-                    random_xpr=options.random_xpr,
+                    **({"random_phases": options.random_phases,
+                        "random_xpr": options.random_xpr} if catalog.model != "msc" else {}),
                     **model_options,
                     **geometry,
                 )

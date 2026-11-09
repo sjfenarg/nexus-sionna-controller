@@ -24,6 +24,7 @@ class LinkPlan:
     tx: PlannedDevice
     rx_panel_override: AntennaPanel | None = None
     tx_panel_override: AntennaPanel | None = None
+    reciprocal: bool = True
 
     @property
     def dataset_name(self) -> str:

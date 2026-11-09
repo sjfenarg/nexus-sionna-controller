@@ -7,7 +7,7 @@ import mitsuba as mi
 from sionna.rt.utils.meshes import clone_mesh
 from ..tr38901 import TR38901SensingTarget
 from ..tr38901.parameters import get_target_parameters
-from .parameters import placeholder_parameters
+from .parameters import MSCCenterParameters, placeholder_parameters
 from .scattering_model import MSCScatteringModel
 
 
@@ -19,7 +19,7 @@ class MSCSensingTarget(TR38901SensingTarget):
     Caller-supplied center parameters replace prototypes. Only the VV response is modeled.
     center_positions accepts any nonempty (P, 3) target-frame constellation in
     meters. center_orientations contains Sionna Euler angles in radians; normal
-    and shaping_axis parameters are expressed in each center frame. With custom
+    parameters are expressed in each center frame. With custom
     positions the default center frames are aligned with the target frame.
     """
 
@@ -71,6 +71,21 @@ class MSCSensingTarget(TR38901SensingTarget):
         self._object_type = object_type
         self._scattering_model = MSCScatteringModel(
             object_type, positions, orientations, parameters, parameter_seed, frequency_hz)
+
+    @classmethod
+    def from_components(cls, name, components, reference_frequency_hz, **options):
+        """Construct from caller-supplied dictionaries; no files or datasets loaded.
+
+        Positions `mu` are target-local meters. Preferred directions and widths
+        use the training engine's degree/elevation convention. Frame construction
+        occurs in the target frame and is transported by the target pose.
+        """
+        components = tuple(components)
+        if not components:
+            raise ValueError("components must be nonempty")
+        return cls(name, center_positions=[c["mu"] for c in components],
+                   parameters=[MSCCenterParameters.from_component(c, reference_frequency_hz)
+                               for c in components], **options)
 
     def clone(self, name=None, as_mesh=False, props=None):
         mesh = clone_mesh(self.mi_mesh, name=name, props=props)

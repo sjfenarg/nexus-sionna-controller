@@ -15,8 +15,8 @@ class MSCScatteringModel(ScatteringModel):
         self.parameter_seed = parameter_seed
         self.parameters = tuple(parameters)
         self._rcs = tuple(MSCRCS(p, frequency_hz) for p in self.parameters)
-        self._cpm = MSCCPM()
-        super().__init__(mi.Point3f(lcs_positions), mi.Point3f(lcs_orientations), list(self._rcs), self._cpm)
+        self._cpm = tuple(MSCCPM(rcs) for rcs in self._rcs)
+        super().__init__(mi.Point3f(lcs_positions), mi.Point3f(lcs_orientations), list(self._rcs), list(self._cpm))
 
     def set_frequency(self, frequency_hz):
         """Called by the installed RCSSolver hook once per scene solve."""
@@ -30,6 +30,7 @@ class MSCScatteringModel(ScatteringModel):
     def parameter_dict(self):
         """Serializable record of every prototype draw for reproducibility."""
         return {"parameter_seed": self.parameter_seed, "calibrated": False,
+                "shape_mode": "reflecting_surface_per_lobe",
                 "center_positions_m": self.spst.lcs_positions.numpy().T.tolist(),
                 "center_orientations_rad": self.spst.lcs_orientations.numpy().T.tolist(),
                 "centers": [asdict(p) for p in self.parameters],

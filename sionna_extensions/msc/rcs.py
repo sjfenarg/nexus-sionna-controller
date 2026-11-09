@@ -1,4 +1,4 @@
-"""VV center RCS: Section III, equations (8)-(16) of the MSC manuscript."""
+"""Signed reflecting_surface_per_lobe kernel, matching the trained engine."""
 
 import math
 import drjit as dr
@@ -45,37 +45,49 @@ class MSCRCS:
         p = self.parameters
         k_i, k_s = dr.normalize(mi.Vector3f(k_i)), dr.normalize(mi.Vector3f(k_s))
         normal = dr.normalize(mi.Vector3f(*p.normal))
+        view_tx = -k_i
         reflected = k_i - 2.0*dr.dot(k_i, normal)*normal
-        # atan2 remains accurate around the specular maximum.
-        psi = dr.atan2(dr.norm(dr.cross(reflected, k_s)), dr.dot(reflected, k_s))
-        window = (1.0 + math.exp(-p.psi_threshold/p.transition_width)) / (
-            1.0 + dr.exp((psi - p.psi_threshold)/p.transition_width))
-        # Literal manuscript equation: the smooth window attenuates the rear lobe.
-        spec = p.w0 * dr.square(dr.cos(psi)) * window
-        side = p.wr_side * (
-            dr.square(sinc(p.kappa_side*(psi - p.psi_side)))
-            + dr.square(sinc(p.kappa_side*(psi - (2.0*math.pi - p.psi_side)))))
-        back = p.wr_back * dr.square(sinc(p.kappa_back*(psi - p.psi_back)))
-        # Project the configured shaping axis onto the specular transverse plane.
-        axis = mi.Vector3f(*p.shaping_axis)
-        transverse = axis - dr.dot(axis, reflected)*reflected
-        # At alignment use a nonparallel Cartesian axis for a stable frame.
-        fallback = dr.select(dr.abs(reflected.z) < 0.9,
-                             mi.Vector3f(0, 0, 1), mi.Vector3f(0, 1, 0))
-        transverse = dr.select(dr.squared_norm(transverse) > 1e-12, transverse,
-                               fallback - dr.dot(fallback, reflected)*reflected)
-        e_phi = dr.normalize(transverse)
-        e_theta = dr.cross(reflected, e_phi)
-        x, y, z = dr.dot(k_s, e_phi), dr.dot(k_s, e_theta), dr.dot(k_s, reflected)
-        delta_phi = dr.atan2(x, z)
-        delta_theta = dr.atan2(y, dr.sqrt(dr.square(x) + dr.square(z)))
-        wavelength = C/self._frequency
-        wavelength_ref = C/p.reference_frequency_hz
-        l_phi = wavelength_ref/(2.0*math.sin(p.beamwidth_phi/2.0))
-        l_theta = wavelength_ref/(2.0*math.sin(p.beamwidth_theta/2.0))
-        shape = dr.abs(sinc(l_phi*dr.sin(delta_phi)/wavelength)) * dr.abs(
-            sinc(l_theta*dr.sin(delta_theta)/wavelength))
-        return (spec + side + back)*shape
+
+        def angle(a, b):
+            return dr.acos(dr.clip(dr.dot(a, b), -1.0, 1.0))
+
+        def visibility(x):
+            return (1.0 + math.exp(-1.3/0.3))/(1.0 + dr.exp((x-1.3)/0.3))
+
+        def look_at(direction):
+            # Exact training convention, evaluated in target/center coordinates.
+            raw = mi.Vector3f(0, 0, 1) - direction*direction.z
+            length = dr.norm(raw)
+            b = dr.select(length < 1e-9, mi.Vector3f(0, 1, 0), raw/dr.maximum(length, 1e-12))
+            return dr.cross(b, direction), b
+
+        # Duff tangent frame used by the trained engine for lobe directions.
+        sign = dr.select(normal.z >= 0, 1.0, -1.0)
+        a = -1.0/(sign + normal.z)
+        b = normal.x*normal.y*a
+        tangent = mi.Vector3f(1.0 + sign*normal.x*normal.x*a, sign*b, -sign*normal.x)
+        side1 = math.cos(p.psi_side)*normal + math.sin(p.psi_side)*tangent
+        side2 = math.cos(p.psi_side)*normal - math.sin(p.psi_side)*tangent
+        back_angle = p.psi_back if p.psi_back <= math.pi else 2*math.pi-p.psi_back
+        back = math.cos(back_angle)*normal + math.sin(back_angle)*tangent
+        colat = angle(view_tx, normal)
+        k_spec = dr.square(dr.cos(colat))*visibility(colat)
+        scale_phi = 0.44294647068945243/max(math.sin(p.beamwidth_phi/2), 1.1920928955078125e-7)*self._frequency/p.reference_frequency_hz
+        scale_theta = 0.44294647068945243/max(math.sin(p.beamwidth_theta/2), 1.1920928955078125e-7)*self._frequency/p.reference_frequency_hz
+
+        def shape(direction, specular=False):
+            t, b = look_at(direction)
+            v = k_s + view_tx if specular else k_s
+            # torch.sinc is normalized and SIGNED, unlike the geometric sinc.
+            return sinc(math.pi*dr.dot(v, t)*scale_phi)*sinc(math.pi*dr.dot(v, b)*scale_theta)
+
+        result = p.w0*k_spec*visibility(angle(k_s, reflected))*shape(normal, True)
+        for direction, weight, width in ((side1, p.wr_side, 20.0),
+                                          (side2, p.wr_side, 20.0),
+                                          (back, p.wr_back, 15.0)):
+            kernel = dr.square(sinc(width*angle(view_tx, direction)))
+            result += weight*kernel*visibility(angle(k_s, direction))*shape(direction)
+        return result
 
     def __call__(self, k_i, k_s, seed=0):
         return dr.square(self.amplitude(k_i, k_s))

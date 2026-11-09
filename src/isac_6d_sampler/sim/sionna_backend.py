@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -228,7 +228,10 @@ class SionnaSimulator:
         solver = PathSolver()
         rcs_solver = _rcs_solver_for_scene(scene, request)
 
-        batches = _build_timeframe_link_batches(timeframes, start_index, request.sionna.los)
+        batches = _build_timeframe_link_batches(
+            timeframes, start_index, request.sionna.los,
+            reciprocal=not any(hasattr(t.scattering_model, "set_frequency")
+                               for t in scene.sensing_targets.values()))
         for batch_index, batch in enumerate(batches):
             if radiomap_link_cache is not None and _append_cached_radiomap_links(
                 frame_links,
@@ -1095,11 +1098,13 @@ def _build_timeframe_link_batches(
     timeframes: tuple[TimeframePlan, ...],
     start_index: int,
     request_los: bool,
+    reciprocal: bool = True,
 ) -> list[TimeframeLinkBatch]:
     grouped: dict[tuple, list[TimeframeLinkRef]] = {}
     for offset, timeframe in enumerate(timeframes):
         timeframe_index = start_index + offset
         for link in timeframe.links:
+            link = replace(link, reciprocal=reciprocal)
             solver_link = _solver_link(link)
             key = (
                 _link_panel_key(solver_link, "rx", timeframe),
@@ -1158,13 +1163,13 @@ def _canonical_solver_ref_key(ref: TimeframeLinkRef) -> tuple[int, str, str]:
 
 
 def _solver_rx_device(link: LinkPlan):
-    if isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment):
+    if _link_uses_reverse_solver_direction(link):
         return link.tx
     return link.rx
 
 
 def _solver_tx_device(link: LinkPlan):
-    if isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment):
+    if _link_uses_reverse_solver_direction(link):
         return link.rx
     return link.tx
 
@@ -1181,7 +1186,7 @@ def _solver_link(link: LinkPlan) -> LinkPlan:
 
 
 def _link_uses_reverse_solver_direction(link: LinkPlan) -> bool:
-    return isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment)
+    return link.reciprocal and isinstance(link.rx, BaseStation) and isinstance(link.tx, UserEquipment)
 
 
 def _transpose_reciprocal_link_data(

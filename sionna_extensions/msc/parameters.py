@@ -13,7 +13,7 @@ class MSCCenterParameters:
     w0: float = 1.0
     wr_side: float = 0.2
     wr_back: float = 0.1
-    n: float = 4.0
+    n: float = 2.0  # Legacy serialized field; only the manuscript exponent is supported.
     kappa_side: float = 3.0
     kappa_back: float = 2.0
     psi_side: float = math.pi / 2
@@ -23,12 +23,17 @@ class MSCCenterParameters:
     beamwidth_phi: float = math.pi / 3
     beamwidth_theta: float = math.pi / 3
     reference_frequency_hz: float = 12.5e9
+    shaping_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)
     normal: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
     def __post_init__(self):
         for field in fields(self):
-            if field.name != "normal" and not math.isfinite(getattr(self, field.name)):
+            if field.name not in ("normal", "shaping_axis") and not math.isfinite(getattr(self, field.name)):
                 raise ValueError(f"{field.name} must be finite")
+        if self.n != 2.0:
+            raise ValueError("The current manuscript requires n=2")
+        if len(self.shaping_axis) != 3 or not all(math.isfinite(x) for x in self.shaping_axis) or not any(self.shaping_axis):
+            raise ValueError("shaping_axis must be a finite nonzero three-vector")
         for name in ("w0", "wr_side", "wr_back", "n"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be non-negative")
@@ -68,7 +73,7 @@ def placeholder_parameters(count, seed, normals):
             w0=float(rng.uniform(0.5, 4.0)),
             wr_side=float(rng.uniform(0.05, 0.5)),
             wr_back=float(rng.uniform(0.02, 0.3)),
-            n=float(rng.uniform(2.0, 8.0)),
+            n=2.0,
             kappa_side=float(rng.uniform(1.5, 5.0)),
             kappa_back=float(rng.uniform(1.5, 4.0)),
             beamwidth_phi=float(rng.uniform(0.4, 1.5)),

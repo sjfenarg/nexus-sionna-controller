@@ -57,5 +57,7 @@ class MSCScatteringModel(ScatteringModel):
     def parameter_dict(self):
         """Serializable record of every prototype draw for reproducibility."""
         return {"parameter_seed": self.parameter_seed, "calibrated": False,
+                "center_positions_m": self.spst.lcs_positions.numpy().T.tolist(),
+                "center_orientations_rad": self.spst.lcs_orientations.numpy().T.tolist(),
                 "centers": [asdict(p) for p in self.parameters],
                 "polarization": {mode: asdict(law) for mode, law in self.polarization_laws.items()}}

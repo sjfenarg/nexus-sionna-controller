@@ -50,18 +50,25 @@ class MSCRCS:
         psi = dr.atan2(dr.norm(dr.cross(reflected, k_s)), dr.dot(reflected, k_s))
         window = (1.0 + math.exp(-p.psi_threshold/p.transition_width)) / (
             1.0 + dr.exp((psi - p.psi_threshold)/p.transition_width))
-        # A fractional exponent requires a non-negative cosine. The specular
-        # component occupies the forward hemisphere of the reflected direction.
-        spec = p.w0 * dr.power(dr.maximum(dr.cos(psi), 0.0), p.n) * window
+        # Literal manuscript equation: the smooth window attenuates the rear lobe.
+        spec = p.w0 * dr.square(dr.cos(psi)) * window
         side = p.wr_side * (
             dr.square(sinc(p.kappa_side*(psi - p.psi_side)))
             + dr.square(sinc(p.kappa_side*(psi - (2.0*math.pi - p.psi_side)))))
         back = p.wr_back * dr.square(sinc(p.kappa_back*(psi - p.psi_back)))
-        phi_ref = dr.atan2(reflected.y, reflected.x)
-        phi_s = dr.atan2(k_s.y, k_s.x)
-        delta_phi = phi_s - phi_ref
-        delta_theta = dr.atan2(k_s.z, dr.norm(mi.Vector2f(k_s.x, k_s.y))) - dr.atan2(
-            reflected.z, dr.norm(mi.Vector2f(reflected.x, reflected.y)))
+        # Project the configured shaping axis onto the specular transverse plane.
+        axis = mi.Vector3f(*p.shaping_axis)
+        transverse = axis - dr.dot(axis, reflected)*reflected
+        # At alignment use a nonparallel Cartesian axis for a stable frame.
+        fallback = dr.select(dr.abs(reflected.z) < 0.9,
+                             mi.Vector3f(0, 0, 1), mi.Vector3f(0, 1, 0))
+        transverse = dr.select(dr.squared_norm(transverse) > 1e-12, transverse,
+                               fallback - dr.dot(fallback, reflected)*reflected)
+        e_phi = dr.normalize(transverse)
+        e_theta = dr.cross(reflected, e_phi)
+        x, y, z = dr.dot(k_s, e_phi), dr.dot(k_s, e_theta), dr.dot(k_s, reflected)
+        delta_phi = dr.atan2(x, z)
+        delta_theta = dr.atan2(y, dr.sqrt(dr.square(x) + dr.square(z)))
         wavelength = C/self._frequency
         wavelength_ref = C/p.reference_frequency_hz
         l_phi = wavelength_ref/(2.0*math.sin(p.beamwidth_phi/2.0))

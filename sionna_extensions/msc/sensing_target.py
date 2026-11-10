@@ -79,11 +79,22 @@ class MSCSensingTarget(TR38901SensingTarget):
         Positions `mu` are target-local meters. Preferred directions and widths
         use the training engine's degree/elevation convention. Frame construction
         occurs in the target frame and is transported by the target pose.
+        Cuboid dimensions default to twice the maximum absolute coordinate on
+        each axis, enclosing the constellation about the target origin. An
+        axis with zero extent retains its template dimension. Explicit geometry
+        overrides remain supported; center positions are never rescaled.
         """
         components = tuple(components)
         if not components:
             raise ValueError("components must be nonempty")
-        return cls(name, center_positions=[c["mu"] for c in components],
+        positions = np.asarray([c["mu"] for c in components], dtype=float)
+        if positions.shape != (len(components), 3) or not np.all(np.isfinite(positions)):
+            raise ValueError("component mu must contain three finite coordinates in meters")
+        for axis, dimension in enumerate(("length", "width", "height")):
+            extent = float(2 * np.max(np.abs(positions[:, axis])))
+            if extent > 0:
+                options.setdefault(dimension, extent)
+        return cls(name, center_positions=positions,
                    parameters=[MSCCenterParameters.from_component(c, reference_frequency_hz)
                                for c in components], **options)
 

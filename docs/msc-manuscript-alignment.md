@@ -18,6 +18,10 @@ uses target-local `mu` positions in meters and zero point Euler orientations.
 Its component normals and the engine's Duff/look-at frames are then evaluated
 in the target coordinate system. Target attitude rotates positions and frames
 together. Full supplied constellations are neither mirrored nor deduplicated.
+The component factory defaults cuboid length, width and height to twice the
+maximum absolute center coordinate on each corresponding axis. Zero-extent
+axes keep their template size; explicit dimensions override these defaults.
+The target origin and trained center positions stay unchanged.
 No trained model file is bundled, selected, opened or imported automatically.
 Omitted custom parameters still generate explicitly uncalibrated prototypes.
 

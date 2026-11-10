@@ -22,10 +22,14 @@ class MSCCenterParameters:
     beamwidth_theta: float = math.pi / 3
     reference_frequency_hz: float = 12.5e9
     normal: tuple[float, float, float] = (1.0, 0.0, 0.0)
+    # At a vertical normal, retain the training azimuth as aperture roll.
+    # A normal alone cannot encode this orientation for unequal beamwidths.
+    pole_azimuth_rad: float | None = None
 
     def __post_init__(self):
         for field in fields(self):
-            if field.name != "normal" and not math.isfinite(getattr(self, field.name)):
+            if (field.name != "normal" and getattr(self, field.name) is not None
+                    and not math.isfinite(getattr(self, field.name))):
                 raise ValueError(f"{field.name} must be finite")
         if self.kappa_side != 20.0 or self.kappa_back != 15.0:
             raise ValueError("Trained kernel requires kappa_side=20 and kappa_back=15")
@@ -70,6 +74,7 @@ class MSCCenterParameters:
             reference_frequency_hz=reference_frequency_hz,
             normal=(math.cos(elevation)*math.cos(azimuth),
                     math.cos(elevation)*math.sin(azimuth), math.sin(elevation)),
+            pole_azimuth_rad=azimuth,
         )
 
 

@@ -13,6 +13,15 @@ The normal is `(cos(e)*cos(a), cos(e)*sin(a), sin(e))`. These values are not
 Sionna zenith angles or Euler angles. Widths and lobe offsets are also degrees
 in these dictionaries. Direct `MSCCenterParameters` fields use radians.
 
+At exactly vertical preferred directions, the normal alone loses the aperture's
+orientation in the XY plane. The component importer retains `mu_phi_0` as
+`pole_azimuth_rad`. The specular aperture uses the horizontal radial axis
+`(cos(phi), sin(phi), 0)` for its elevation-width axis at a pole. This matches
+the trained float32 engine's look-at axes, up to signs that cancel in the even
+sinc factors, without relying on the residual of `cos(pi/2)`. Non-pole frames
+and side/back lobe formulas are unchanged. Direct parameter callers omitting
+this optional azimuth retain the legacy pole fallback.
+
 `MSCSensingTarget.from_components(name, components, reference_frequency_hz, ...)`
 uses target-local `mu` positions in meters and zero point Euler orientations.
 Its component normals and the engine's Duff/look-at frames are then evaluated

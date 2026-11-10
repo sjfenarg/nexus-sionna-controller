@@ -54,11 +54,18 @@ class MSCRCS:
         def visibility(x):
             return (1.0 + math.exp(-1.3/0.3))/(1.0 + dr.exp((x-1.3)/0.3))
 
-        def look_at(direction):
+        def look_at(direction, specular=False):
             # Exact training convention, evaluated in target/center coordinates.
             raw = mi.Vector3f(0, 0, 1) - direction*direction.z
             length = dr.norm(raw)
-            b = dr.select(length < 1e-9, mi.Vector3f(0, 1, 0), raw/dr.maximum(length, 1e-12))
+            fallback = mi.Vector3f(0, 1, 0)
+            if specular and p.pole_azimuth_rad is not None:
+                # Training retains azimuth through float32 cos(+/-pi/2).
+                # Define the same aperture axes explicitly, without relying on
+                # that residual. Axis signs cancel in the even sinc factors.
+                fallback = mi.Vector3f(math.cos(p.pole_azimuth_rad),
+                                       math.sin(p.pole_azimuth_rad), 0)
+            b = dr.select(length < 1e-9, fallback, raw/dr.maximum(length, 1e-12))
             return dr.cross(b, direction), b
 
         # Duff tangent frame used by the trained engine for lobe directions.
@@ -76,7 +83,7 @@ class MSCRCS:
         scale_theta = 0.44294647068945243/max(math.sin(p.beamwidth_theta/2), 1.1920928955078125e-7)*self._frequency/p.reference_frequency_hz
 
         def shape(direction, specular=False):
-            t, b = look_at(direction)
+            t, b = look_at(direction, specular)
             v = k_s + view_tx if specular else k_s
             # torch.sinc is normalized and SIGNED, unlike the geometric sinc.
             return sinc(math.pi*dr.dot(v, t)*scale_phi)*sinc(math.pi*dr.dot(v, b)*scale_theta)

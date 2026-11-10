@@ -13,6 +13,7 @@ class MSCScatteringModel(ScatteringModel):
                  parameter_seed=0, frequency_hz=12.5e9):
         self.object_type = object_type
         self.parameter_seed = parameter_seed
+        self.model_provenance = None
         self.parameters = tuple(parameters)
         self._rcs = tuple(MSCRCS(p, frequency_hz) for p in self.parameters)
         self._cpm = tuple(MSCCPM(rcs) for rcs in self._rcs)
@@ -30,6 +31,8 @@ class MSCScatteringModel(ScatteringModel):
     def parameter_dict(self):
         """Serializable record of every prototype draw for reproducibility."""
         return {"parameter_seed": self.parameter_seed, "calibrated": False,
+                "trained": self.model_provenance is not None,
+                "provenance": self.model_provenance,
                 "shape_mode": "reflecting_surface_per_lobe",
                 "center_positions_m": self.spst.lcs_positions.numpy().T.tolist(),
                 "center_orientations_rad": self.spst.lcs_orientations.numpy().T.tolist(),

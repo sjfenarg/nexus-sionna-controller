@@ -35,6 +35,9 @@ isac6d-gui = "isac_6d_sampler.gui.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+isac_6d_sampler = ["data/msc/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

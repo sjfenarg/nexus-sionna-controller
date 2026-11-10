@@ -31,8 +31,11 @@ The component factory defaults cuboid length, width and height to twice the
 maximum absolute center coordinate on each corresponding axis. Zero-extent
 axes keep their template size; explicit dimensions override these defaults.
 The target origin and trained center positions stay unchanged.
-No trained model file is bundled, selected, opened or imported automatically.
-Omitted custom parameters still generate explicitly uncalibrated prototypes.
+The application bundles a compact coefficient snapshot for `AGV_MSC_K5`,
+selected automatically by the catalog, with source run and model/engine hashes.
+GUI previews and simulation share its constructor. The old `AGV_MSC` name is a
+compatibility alias for this fitted model. Other catalog MSC types still use
+explicitly uncalibrated prototypes when custom parameters are omitted.
 
 ## Field and frequency behavior
 

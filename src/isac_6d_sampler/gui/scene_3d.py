@@ -2318,6 +2318,7 @@ def _scattering_point_lobe_meshes(
         dimensions,
         directions,
         sensing_model=sensing_target_type(obj.object_name).model,
+        trained_model=sensing_target_type(obj.object_name).trained_model,
         parameter_seed=sensing_options(obj).msc_parameter_seed,
         frequency_hz=frequency_hz,
     )

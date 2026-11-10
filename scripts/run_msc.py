@@ -16,7 +16,7 @@ def main():
     scratch = repo.parent / "tmp" / "msc-implementation"
     scratch.mkdir(parents=True, exist_ok=True)
     llvm = scratch / "runtime" / "llvm22" / "bin" / "LLVM-C.dll"
-    if llvm.exists():
+    if os.name == "nt" and llvm.exists():
         os.environ.setdefault("DRJIT_LIBLLVM_PATH", str(llvm))
     os.environ.setdefault("DRJIT_CACHE_DIR", str(scratch / "drjit-cache-llvm22"))
     sys.dont_write_bytecode = True

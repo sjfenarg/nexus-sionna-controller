@@ -440,8 +440,12 @@ class SionnaSimulator:
                         "MSC extension is missing. Run the controller's "
                         "scripts/install_msc_extension.py with this environment's Python."
                     ) from exc
-                target_class = MSCSensingTarget
+                if catalog.trained_model and not hasattr(MSCSensingTarget, "from_components"):
+                    raise RuntimeError("Reinstall the MSC extension to load trained components")
+                from .msc_targets import make_msc_target
+                target_class = make_msc_target
                 model_options = {"parameter_seed": options.msc_parameter_seed,
+                                 "trained_model": catalog.trained_model,
                                  "frequency_hz": float(scene.frequency[0]),
                                  "random_cpr": False, "random_phases": False, "random_xpr": False}
             geometry: dict[str, object] = {}
@@ -585,7 +589,7 @@ def _sensing_metadata(target_ids: list[str], sensing_channel: str, frequency_vec
                         msc_frequency_evaluation="RF sweep for frequency/ifft modes; carrier for path/bin modes")
         if not msc_in_range:
             warnings.warn("MSC manuscript covers 10-15 GHz; requested band is outside it. "
-                          "Current MSC parameters are uncalibrated placeholders.", RuntimeWarning,
+                          "Extrapolated MSC responses are not measurement-validated.", RuntimeWarning,
                           stacklevel=3)
     return metadata
 
@@ -800,7 +804,13 @@ def _configure_mitsuba_variant(use_gpu: bool) -> str:
     if use_gpu:
         try:
             mi.set_variant("cuda_ad_mono_polarized", "llvm_ad_mono_polarized")
-        except ImportError:
+            # A CUDA context alone does not establish OptiX availability in WSL.
+            # Probe before Sionna defines variant-specific material classes.
+            if str(mi.variant()).startswith("cuda"):
+                mi.load_dict({"type": "scene"})
+        except (ImportError, RuntimeError) as exc:
+            warnings.warn(f"GPU ray tracing unavailable; using LLVM CPU: {exc}",
+                          RuntimeWarning, stacklevel=2)
             mi.set_variant("llvm_ad_mono_polarized")
     else:
         mi.set_variant("llvm_ad_mono_polarized")

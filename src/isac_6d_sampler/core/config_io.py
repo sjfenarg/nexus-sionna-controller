@@ -19,6 +19,7 @@ from .model import (
     UserEquipment,
 )
 from .antenna_patterns import sionna_pattern_name
+from .sensing_targets import sensing_target_type
 
 
 def read_request(path: Path) -> SimulationRequest:
@@ -142,9 +143,11 @@ def _ue(data: dict[str, Any]) -> UserEquipment:
 
 def _object(data: dict[str, Any]) -> DynamicObject:
     position = _vector3(data.get("position", (0.0, 0.0, 0.0)))
+    object_name = str(data.get("object_name", "CAR_obj"))
+    catalog = sensing_target_type(object_name)
     return DynamicObject(
         id=str(data["id"]),
-        object_name=str(data.get("object_name", "CAR_obj")),
+        object_name=catalog.name if catalog else object_name,
         position=position,
         orientation_rad=_vector3(data.get("orientation_rad", (0.0, 0.0, 0.0))),
         trajectory=_trajectory(data.get("trajectory", _static_trajectory_data(position))),

@@ -223,6 +223,14 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
         observed["simulation_preview_cleared"] = main_window._simulation_preview_design is None
         observed["simulation_preview_actual_restored"] = main_window.design.user_equipments[0].position == preview_original_position
 
+        from isac_6d_sampler.core.model import DynamicObject
+        main_window.view.set_scene = preview_set_scene
+        trained_request = deepcopy(request)
+        trained_request.scene.objects = [DynamicObject("agv", object_name="AGV_MSC_K5")]
+        main_window._apply_request_to_controls(trained_request)
+        assert main_window.object_name.findText("AGV_MSC_K5") >= 0
+        assert main_window._request_from_controls().scene.objects[0].object_name == "AGV_MSC_K5"
+
         for window in self.topLevelWidgets():
             window.close()
         return 0

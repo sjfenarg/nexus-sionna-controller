@@ -1,8 +1,8 @@
 # MSC sensing model
 
-MSC adds a VV reference scattering-center kernel and a shared, VV-referenced
-polarization matrix to Sionna RT 2.2.0. The current parameters are seeded random
-prototypes, not measurement fits. The manuscript's operating band is 10–15 GHz.
+MSC adds a signed reflecting-surface VV scattering-center kernel to
+Sionna RT 2.2.0. The `AGV_MSC_K5` target uses the fitted five-center AGV model from run
+`20261110T092624418248Z_6d75dba4b4e5`. Other MSC targets use seeded prototypes. The manuscript's operating band is 10–15 GHz.
 
 ## Install and run
 
@@ -41,7 +41,7 @@ The GUI object selector includes:
 | `HUMAN_MULTI_MSC` | 5 | 0.5 × 0.5 × 1.75 |
 | `CAR_MSC` | 5 | 5 × 2 × 1.6 |
 | `CAR_SP_MSC` | 1 | 5 × 2 × 1.6 |
-| `AGV_MSC` | 5 | 1 × 0.5 × 0.5 |
+| `AGV_MSC_K5` | 5 | 0.379915 × 0.748699 × 0.595169 |
 | `AGV_SP_MSC` | 1 | 1 × 0.5 × 0.5 |
 
 Set the GUI band to, for example, `12.4:12.6:65:MSC`. RCS lobe previews use the
@@ -64,11 +64,9 @@ Existing requests use the same `sensing` object:
 }
 ```
 
-`msc_parameter_seed` selects fixed prototype parameters and participates in the
-polarization realization. The simulation seed selects stochastic draws. Flags
-default to false, matching the deterministic default of the TR38901 workflow.
-Enable all three flags for stochastic XPR, CPR and relative phases. VV keeps a
-unit CPM entry and its propagation phase.
+`msc_parameter_seed` selects fixed prototype parameters for untrained targets.
+The fitted AGV parameters are independent of this seed. MSC uses deterministic
+VV only; keep polarization randomization flags disabled.
 
 `random_sigma_s` is rejected for MSC because that factor is absent from the MSC
 formulation. The legacy `model_type` must remain at its default of 2. Mesh and
@@ -96,8 +94,7 @@ TR38901 has no five-point human; MSC supplies an additional face-center template
 `MSCRCS(k_i, k_s, seed)` returns nonnegative VV RCS in square meters.
 `MSCCPM(k_i, k_s, seed)` returns real and imaginary 2×2 matrices.
 `MSCScatteringModel` composes them through Sionna's `ScatteringPoints` class.
-`MSCSensingTarget` accepts `parameters` and `polarization_laws` overrides for
-future fits; `scattering_model.parameter_dict()` records the current values.
+`MSCSensingTarget` accepts custom `parameters` or `from_components` input; `scattering_model.parameter_dict()` records the current values.
 
 ## Frequency and interpretation
 
@@ -108,20 +105,11 @@ per bin. MSC IFFT modes use an exact IFFT of that sweep, including when the
 requested mode is `pdp_ifft_gridded`; HDF5 records the actual renderer and delay
 spacing. Path coefficients, path delays, and binned modes refer to the carrier.
 
-Whole-band monostatic/bistatic ratio laws are used in this prototype; subband
-fits and spatially correlated polarization evolution are future refinements.
-All centers share a target's polarization realization. Independent VH/HV
-amplitude draws use the same XPR law; monostatic AGV/car share their relative
-cross-channel phase. HH/VV CPR has the positive dB amplitude sign.
-
-The specular cosine is clamped to zero beyond 90° to support fractional
-exponents. Aperture offsets are the scattered direction's local azimuth and
-elevation minus those of the reflected incident direction. These explicit
-conventions should be checked when importing fitted manuscript parameters.
-The solver supplies geometric phase once, using Sionna's phase convention.
-
-HDF5 metadata includes `msc_calibrated=false`, the prototype seed, actual center
-and polarization parameters, and whether the response used an RF sweep.
+The signed per-lobe aperture uses direction cosines and fixed exponent two,
+with a VV Jones sign adapter. The solver supplies geometric phase once.
+See [kernel and frame conventions](msc-manuscript-alignment.md) for the exact
+training alignment, elevation convention and vertical-normal frame handling.
+HDF5 metadata records the actual center parameters and RF sweep behavior.
 
 ## Validation from the parent workspace
 
@@ -133,3 +121,43 @@ and polarization parameters, and whether the response used an RF sweep.
 The parent `validation/msc/` folder holds numerical checks, actual solver tests,
 controller/HDF5 tests and the car comparison. Generated data stays under parent
 `tmp/`; the report and plots stay under parent `reports/`.
+
+
+## Trained AGV K5 in GUI and CLI
+
+Select `AGV_MSC_K5` in the GUI object list, or pass
+`--object agv:AGV_MSC_K5:0,0,0.29758435278799084` to the CLI. The position is
+always the target center; this example places the fitted cuboid bottom at zero.
+Existing `AGV_MSC` names resolve to the same fitted target and are normalized
+when loaded from JSON or the CLI. There is no random-parameter fallback for it.
+
+The package includes the five original component dictionaries, reference
+frequency and source model/engine hashes in `data/msc/agv_k5.json`. Optimizer
+histories and measurements are not included. Source model SHA-256:
+`2b6b78ac33280ec3b66b3bea2df608bfad3ecd0094716ebfae09505f7a1d9c4f`.
+GUI RCS previews and simulations use the same factory. The fitted positions,
+weights, widths and normals are unchanged. Cuboid size is inferred from the
+positions; custom dimensions or meshes are rejected for this fixed target.
+`msc_parameter_seed` does not randomize the trained model. Only VV is used;
+the source file's HH entry is not imported.
+
+HDF5 `msc_parameters_json` records `trained=true`, actual coefficients and
+`provenance` with the source hashes/run. `calibrated=false` and
+`measurement_validated=false` distinguish fitted coefficients from independent
+measurement validation; the other MSC targets remain marked as prototypes.
+
+## WSL CPU/GPU selection
+
+Keep the WSL environment separate from Windows using `UV_PROJECT_ENVIRONMENT`.
+The launcher selects the optional Windows LLVM DLL only on Windows. GPU
+selection probes an empty Mitsuba scene to establish OptiX readiness before
+Sionna initializes its material classes. A CUDA context without functioning
+OptiX emits a warning and falls back to LLVM CPU; result metadata records the
+actual Mitsuba variant. `--use-gpu off` explicitly selects CPU.
+
+On the checked WSL installation, NVIDIA-SMI detects the RTX 5070 but the exposed
+`libnvoptix.so.1` is a loader lacking `optixQueryFunctionTable`; GPU ray tracing
+is unavailable. Merely setting `DRJIT_LIBOPTIX_PATH` to that loader does not fix
+it. See the [Mitsuba WSL OptiX instructions](https://github.com/mitsuba-renderer/mitsuba3/blob/master/docs/src/optix_setup.rst)
+for driver-library compatibility; no Windows driver or system library changes
+are made by this launcher.

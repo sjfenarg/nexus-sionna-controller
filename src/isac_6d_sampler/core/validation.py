@@ -215,6 +215,10 @@ def _validate_object_targets(request: SimulationRequest, errors: list[str]) -> N
 def _validate_sensing_target(prefix: str, obj, scenario_path, errors: list[str]) -> None:
     options = sensing_options(obj)
     target = sensing_target_type(obj.object_name)
+    if target.trained_model and (options.mesh or (
+            options.dimensions is not None and tuple(options.dimensions) != target.dimensions_m)):
+        errors.append(f"{prefix}: trained {target.name} uses its fitted cuboid dimensions; "
+                      "mesh or dimension changes are not supported")
     if target.model == "msc":
         if (isinstance(options.msc_parameter_seed, bool)
                 or not isinstance(options.msc_parameter_seed, int)

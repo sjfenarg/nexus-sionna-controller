@@ -17,6 +17,7 @@ from isac_6d_sampler.core.model import (
     UserEquipment,
 )
 from isac_6d_sampler.core.trajectory_specs import build_trajectory_spec
+from isac_6d_sampler.core.sensing_targets import sensing_target_type
 from isac_6d_sampler.core.validation import validate_request
 from isac_6d_sampler.io.reference_h5 import ReferenceH5Writer, default_output_path
 from isac_6d_sampler.io.schema import validate_reference_h5
@@ -294,6 +295,9 @@ def _parse_object_spec(spec: str) -> DynamicObject:
     if len(parts) not in (3, 4):
         raise ValueError("Object specs must be ID:SCENE_OBJECT:X,Y,Z[:YAW,PITCH,ROLL]")
     object_id, object_name, position_text = parts[:3]
+    catalog = sensing_target_type(object_name)
+    if catalog:
+        object_name = catalog.name
     position = _parse_vector3(position_text, label="object position")
     orientation = (
         _parse_vector3(parts[3], label="object orientation")

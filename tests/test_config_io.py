@@ -603,3 +603,28 @@ def test_cli_rejects_invalid_request_before_output(tmp_path):
 
     assert exc_info.value.code == 2
     assert not output_dir.exists()
+
+
+def test_trained_agv_catalog_and_legacy_request_roundtrip(tmp_path):
+    from isac_6d_sampler.cli import _parse_object_spec
+    from isac_6d_sampler.core.msc_models import trained_msc_model, trained_msc_dimensions
+    from isac_6d_sampler.core.sensing_targets import SENSING_TARGET_NAMES, sensing_target_type
+    from isac_6d_sampler.core.model import SensingTargetOptions
+    from isac_6d_sampler.core.validation import validate_request
+    fitted = trained_msc_model("agv_k5")
+    assert fitted["source_model_sha256"] == "2b6b78ac33280ec3b66b3bea2df608bfad3ecd0094716ebfae09505f7a1d9c4f"
+    assert len(fitted["components"]) == 5
+    dims = trained_msc_dimensions("agv_k5")
+    np.testing.assert_allclose(dims, [.37991543013209916, .7486986670851327, .5951687055759817])
+    assert "AGV_MSC_K5" in SENSING_TARGET_NAMES and "AGV_MSC" not in SENSING_TARGET_NAMES
+    assert sensing_target_type("AGV_MSC").name == "AGV_MSC_K5"
+    assert _parse_object_spec("agv:AGV_MSC:0,0,0").object_name == "AGV_MSC_K5"
+    request = template_request()
+    request.scene.objects = [DynamicObject("agv", object_name="AGV_MSC")]
+    path = tmp_path / "trained.json"
+    write_request(path, request)
+    restored = read_request(path)
+    assert restored.scene.objects[0].object_name == "AGV_MSC_K5"
+    restored.scene.objects[0].sensing = SensingTargetOptions(dimensions=(1, 1, 1))
+    with pytest.raises(ValueError, match="fitted cuboid"):
+        validate_request(restored)

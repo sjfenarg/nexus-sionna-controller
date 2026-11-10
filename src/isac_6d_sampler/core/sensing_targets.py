@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .model import DynamicObject, SensingTargetOptions, Vector3
+from .msc_models import trained_msc_dimensions
 
 # 3GPP TR 38.901 clause 7.9 sensing targets are specified for 0.5-52.6 GHz.
 # Sionna does not enforce this range, so the backend only flags it.
@@ -17,6 +18,7 @@ class SensingTargetType:
     dimensions_m: Vector3
     description: str
     model: str = "tr38901"
+    trained_model: str | None = None
 
 
 # Default (length, width, height) in the target LCS: length along x, the direction
@@ -40,11 +42,13 @@ SENSING_TARGET_TYPES: tuple[SensingTargetType, ...] = (
     SensingTargetType("HUMAN_MULTI_MSC", "human-multi-sp", (0.5, 0.5, 1.75), "MSC human, five centers (prototype)", "msc"),
     SensingTargetType("CAR_MSC", "vehicle-multi-sp", (5.0, 2.0, 1.6), "MSC car, five centers (prototype)", "msc"),
     SensingTargetType("CAR_SP_MSC", "vehicle-single-sp", (5.0, 2.0, 1.6), "MSC car, one center (prototype)", "msc"),
-    SensingTargetType("AGV_MSC", "agv-multi-sp", (1.0, 0.5, 0.5), "MSC AGV, five centers (prototype)", "msc"),
+    SensingTargetType("AGV_MSC_K5", "agv-multi-sp", trained_msc_dimensions("agv_k5"),
+                      "Trained MSC AGV, five centers, VV, 10-15 GHz", "msc", "agv_k5"),
     SensingTargetType("AGV_SP_MSC", "agv-single-sp", (1.0, 0.5, 0.5), "MSC AGV, one center (prototype)", "msc"),
 )
 SENSING_TARGET_NAMES = tuple(target.name for target in SENSING_TARGET_TYPES)
 _BY_NAME = {target.name: target for target in SENSING_TARGET_TYPES}
+_BY_NAME["AGV_MSC"] = _BY_NAME["AGV_MSC_K5"]  # Existing saved requests use the trained target too.
 
 
 def sensing_target_type(object_name: str) -> SensingTargetType | None:

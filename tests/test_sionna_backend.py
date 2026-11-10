@@ -584,7 +584,8 @@ def test_configure_mitsuba_variant_falls_back_to_llvm(monkeypatch):
     fake_mi = _FakeMitsuba(fail_cuda=True)
     monkeypatch.setitem(sys.modules, "mitsuba", fake_mi)
 
-    variant = _configure_mitsuba_variant(use_gpu=True)
+    with pytest.warns(RuntimeWarning, match="GPU ray tracing unavailable"):
+        variant = _configure_mitsuba_variant(use_gpu=True)
 
     assert variant == "llvm_ad_mono_polarized"
     assert fake_mi.calls == [
@@ -653,6 +654,9 @@ class _FakeMitsuba(types.ModuleType):
 
     def variant(self):
         return self._variant
+
+    def load_dict(self, _scene):
+        return object()
 
 
 class _FakeSionnaRt(types.ModuleType):
@@ -810,3 +814,13 @@ def test_path_vertex_extraction_preserves_antenna_and_path_indices():
 class _FakePlanarArray:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+
+
+def test_cuda_without_optix_falls_back_before_sionna_import(monkeypatch):
+    fake = _FakeMitsuba()
+    def fail_scene(_scene):
+        raise RuntimeError("Could not initialize OptiX")
+    fake.load_dict = fail_scene
+    monkeypatch.setitem(sys.modules, "mitsuba", fake)
+    with pytest.warns(RuntimeWarning, match="GPU ray tracing unavailable"):
+        assert _configure_mitsuba_variant(True) == "llvm_ad_mono_polarized"

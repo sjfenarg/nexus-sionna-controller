@@ -31,6 +31,7 @@ def monostatic_scattering_patterns(
     sensing_model: str = "tr38901",
     frequency_hz: float = 12.5e9,
     parameter_seed: int = 0,
+    trained_model: str | None = None,
 ) -> tuple[ScatteringPointPattern, ...]:
     """Monostatic RCS of every scattering point at the preview carrier.
 
@@ -47,13 +48,15 @@ def monostatic_scattering_patterns(
         sensing_model,
         float(frequency_hz),
         parameter_seed,
+        trained_model,
     )
     return _cached_patterns(key)
 
 
 @lru_cache(maxsize=64)
 def _cached_patterns(key) -> tuple[ScatteringPointPattern, ...]:
-    object_type, model_type, dimensions, direction_bytes, sensing_model, frequency_hz, parameter_seed = key
+    (object_type, model_type, dimensions, direction_bytes, sensing_model,
+     frequency_hz, parameter_seed, trained_model) = key
     directions = np.frombuffer(direction_bytes, dtype=np.float64).reshape(-1, 3)
     _ensure_mitsuba_variant()
 
@@ -65,9 +68,10 @@ def _cached_patterns(key) -> tuple[ScatteringPointPattern, ...]:
     target_class = TR38901SensingTarget
     model_options = {"model_type": model_type}
     if sensing_model == "msc":
-        from sionna.rt.rcs import MSCSensingTarget
-        target_class = MSCSensingTarget
-        model_options = {"frequency_hz": frequency_hz, "parameter_seed": parameter_seed}
+        from .msc_targets import make_msc_target
+        target_class = make_msc_target
+        model_options = {"frequency_hz": frequency_hz, "parameter_seed": parameter_seed,
+                         "trained_model": trained_model}
     target = target_class(
         name="rcs_pattern_probe",
         object_type=object_type,

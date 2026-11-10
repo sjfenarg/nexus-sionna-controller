@@ -9,7 +9,24 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
     from PySide6.QtWidgets import QApplication, QCheckBox, QDoubleSpinBox, QGroupBox, QPushButton, QScrollArea, QSpinBox, QWidget
 
     from isac_6d_sampler.core.model import RadiomapConfig, SimulationRequest
+    from isac_6d_sampler.core.sensing_targets import SENSING_TARGET_NAMES
     from isac_6d_sampler.gui import app as gui_app
+
+    # Isolate the UI contract from whichever large scene sorts first in the
+    # user's scenario folder. Provide both a scene car and an external mesh.
+    scenario_dir = tmp_path / "scenarios"
+    (scenario_dir / "objects").mkdir(parents=True)
+    (scenario_dir / "Outdoor6D_w_car.xml").write_text(
+        '<scene><shape type="ply" id="CAR_obj">'
+        '<string name="filename" value="car.ply"/></shape></scene>', encoding="utf-8")
+    (scenario_dir / "car.ply").write_text(
+        "ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\n"
+        "property float y\nproperty float z\nelement face 1\n"
+        "property list uchar int vertex_indices\nend_header\n"
+        "0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n", encoding="utf-8")
+    (scenario_dir / "objects" / "DRONE_obj.obj").write_text(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
 
     custom_scenario = tmp_path / "custom_scene.xml"
     custom_scenario.write_text("<scene />\n", encoding="utf-8")
@@ -221,7 +238,7 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
         "max_paths_disabled_when_unlimited": True,
         "antenna_diagrams_visible": 2,
         "antenna_diagrams_hidden": 0,
-        "object_choices": ["CAR_obj", "DRONE_obj"],
+        "object_choices": ["CAR_obj", "DRONE_obj", *SENSING_TARGET_NAMES],
         "scenario_path": str(custom_scenario),
         "scenario_name": custom_scenario.stem,
         "tx_power_roundtrip": 12.5,
@@ -259,6 +276,7 @@ def test_gui_runtime_controls_and_loaded_custom_scenario_preservation(monkeypatc
             "view_xz_posy",
             "view_xz_negy",
             "view_antenna_diagrams",
+            "view_simulation_paths",
         },
         "config_sections": {
             "config_section_actions",

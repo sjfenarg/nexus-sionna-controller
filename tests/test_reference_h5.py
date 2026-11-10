@@ -50,7 +50,8 @@ def test_reference_writer_matches_expected_topology(tmp_path):
         assert sample["parameters/sionna_params"].attrs["tx_power_dbm"] == 20.0
         assert sample["parameters/channel_params"].attrs["tx_power_dbm"] == 20.0
         np.testing.assert_allclose(sample["parameters/channel_params"].attrs["tx_power_w"], 0.1)
-        assert material_params.attrs["source"] == "isac_journal"
+        assert material_params.attrs["source"] == "itu-r-p2040-3_frequency_evaluated_with_project_tuning"
+        assert material_params.attrs["representative_frequency_hz"] == np.mean(result.frequency_vector_hz)
         assert material_params.attrs["n_materials"] >= 1
         assert material_params["material0"].attrs["object_prefix"] == "BRICKS"
         device_params = sample["parameters/device_params"]

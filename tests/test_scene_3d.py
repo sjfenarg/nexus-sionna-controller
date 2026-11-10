@@ -300,9 +300,18 @@ def test_antenna_diagram_mesh_scales_max_radius_to_two_meters():
 
     radius = np.linalg.norm(vertices, axis=1)
 
-    assert vertices.shape == (63, 3)
-    assert faces.shape == (96, 3)
-    assert colors.shape == (96, 4)
+    # Five latitude rings plus two shared pole vertices form a closed sphere.
+    assert vertices.shape == (47, 3)
+    assert faces.shape == (90, 3)
+    assert colors.shape == (90, 4)
+    triangles = vertices[faces]
+    areas = np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0],
+                                    triangles[:, 2] - triangles[:, 0]), axis=1)
+    assert np.all(areas > 0)
+    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]],
+                                    faces[:, [2, 0]]]), axis=1)
+    _, edge_counts = np.unique(edges, axis=0, return_counts=True)
+    assert np.all(edge_counts == 2)
     assert np.isclose(np.max(radius), _ANTENNA_DIAGRAM_RADIUS_M)
 
 

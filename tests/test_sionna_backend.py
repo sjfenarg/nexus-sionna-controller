@@ -731,6 +731,7 @@ class _FakePathSolver:
 
 class _FakeRtScene:
     def __init__(self):
+        self.sensing_targets = {}
         self.transmitters = {}
         self.receivers = {}
         self.transmitter_history = []
